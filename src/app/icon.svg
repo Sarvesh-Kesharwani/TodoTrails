@@ -1,0 +1,25 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="40" y1="24" x2="216" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFCC4D"/>
+      <stop offset="0.46" stop-color="#FF7A67"/>
+      <stop offset="1" stop-color="#D63B32"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="84" y1="68" x2="174" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF8EE"/>
+      <stop offset="1" stop-color="#FFE0A8"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="60" fill="url(#bg)"/>
+  <rect x="26" y="26" width="204" height="204" rx="50" stroke="white" stroke-opacity="0.22" stroke-width="4"/>
+  <circle cx="188" cy="72" r="22" fill="#FFF6DA" fill-opacity="0.95"/>
+  <path d="M74 72H182" stroke="#7F231E" stroke-width="16" stroke-linecap="round"/>
+  <path d="M128 72V188" stroke="#7F231E" stroke-width="16" stroke-linecap="round"/>
+  <path d="M84 94C84 81.8497 93.8497 72 106 72H150" stroke="url(#trail)" stroke-width="18" stroke-linecap="round"/>
+  <path d="M128 72V178" stroke="url(#trail)" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="128" cy="188" r="15" fill="#7F231E"/>
+  <circle cx="128" cy="188" r="7" fill="#FFF6DA"/>
+  <circle cx="95" cy="128" r="7" fill="#FFF6DA"/>
+  <circle cx="161" cy="128" r="7" fill="#FFF6DA"/>
+  <circle cx="128" cy="106" r="6" fill="#FFF6DA"/>
+</svg>
