@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -30,6 +31,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 .devserver.out.log
+.devserver.*.log
+test-results/
+.lh/
+
+# local uploads
+render-backend/uploads/
 
 # env files (can opt-in for committing if needed)
 .env*
