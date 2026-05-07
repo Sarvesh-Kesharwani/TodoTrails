@@ -2211,6 +2211,20 @@ label {
   box-shadow: 0 3px 0 #1f9853;
 }
 
+.ashi-task-btn.is-edit {
+  background: var(--surface-strong);
+  border-color: var(--accent-soft);
+  color: var(--accent-dark);
+  box-shadow: 0 3px 0 rgba(223, 177, 166, 0.55);
+}
+
+.ashi-task-btn.is-edit:hover {
+  background: linear-gradient(180deg, #ffe7a3, #ffc857);
+  color: #5a3a00;
+  border-color: #d6a020;
+  box-shadow: 0 3px 0 #b8841a;
+}
+
 .ashi-task-btn.is-delete {
   background: var(--surface-strong);
   border-color: var(--accent);
@@ -2253,7 +2267,7 @@ label {
   border: 2px solid rgba(255, 255, 255, 0.7);
 }
 
-.ashi-chat-log p {
+.ashi-chat-log > p {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
@@ -2265,6 +2279,39 @@ label {
   line-height: 1.4;
   font-weight: 600;
   box-shadow: 0 3px 0 rgba(223, 177, 166, 0.7);
+}
+
+.ashi-chat-msg p,
+.ashi-chat-msg h3,
+.ashi-chat-msg ul,
+.ashi-chat-msg ol {
+  margin: 0;
+}
+
+.ashi-chat-msg h3 {
+  font-size: 0.95rem;
+  line-height: 1.25;
+  color: inherit;
+}
+
+.ashi-chat-msg p + ul,
+.ashi-chat-msg p + ol,
+.ashi-chat-msg h3 + ul,
+.ashi-chat-msg h3 + ol,
+.ashi-chat-msg ul + p,
+.ashi-chat-msg ol + p {
+  margin-top: 0.45rem;
+}
+
+.ashi-chat-msg ul,
+.ashi-chat-msg ol {
+  display: grid;
+  gap: 0.3rem;
+  padding-left: 1.15rem;
+}
+
+.ashi-chat-msg li {
+  padding-left: 0.12rem;
 }
 
 .ashi-chat-msg.is-user {

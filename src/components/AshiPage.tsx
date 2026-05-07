@@ -2,22 +2,16 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { TodoAttachment, TodoItem } from '@/types/todo';
-import { MONTH_NAMES, endOfDay, getMonthWeeks, parseDate, startOfLocalDay, toDateKey } from '@/lib/planner-date';
+import { endOfDay, parseDate, startOfLocalDay } from '@/lib/planner-date';
 import { uploadTodoAttachment } from '@/lib/attachments-client';
 import { useTodoStore } from './useTodoStore';
 
 type ChatMessage = { role: 'user' | 'assistant'; text: string };
 
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 function uid() {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function formatLong(date: Date) {
-  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function sortedTodos(todos: TodoItem[]) {
@@ -43,95 +37,88 @@ function attachmentPreview(attachments: TodoAttachment[] | undefined) {
   );
 }
 
-interface CalendarPickerProps {
-  selected: Date;
-  onSelect: (date: Date) => void;
-  minDate: Date;
+function renderInlineMarkdown(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
 }
 
-function CalendarPicker({ selected, onSelect, minDate }: CalendarPickerProps) {
-  const [open, setOpen] = useState(false);
-  const [viewYear, setViewYear] = useState(selected.getFullYear());
-  const [viewMonth, setViewMonth] = useState(selected.getMonth());
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const minKey = toDateKey(minDate);
-  const selectedKey = toDateKey(selected);
-  const todayKey = toDateKey(new Date());
+function renderStructuredText(text: string) {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let index = 0;
 
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(event: MouseEvent) {
-      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
     }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
 
-  const weeks = useMemo(() => getMonthWeeks(viewYear, viewMonth), [viewYear, viewMonth]);
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      blocks.push(<h3 key={`h-${index}`}>{renderInlineMarkdown(heading[2])}</h3>);
+      index += 1;
+      continue;
+    }
 
-  function shift(delta: number) {
-    const next = new Date(viewYear, viewMonth + delta, 1);
-    setViewYear(next.getFullYear());
-    setViewMonth(next.getMonth());
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = /^[-*]\s+(.+)$/.exec(lines[index].trim());
+        if (!item) break;
+        items.push(item[1]);
+        index += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    if (/^\d+[.)]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = /^\d+[.)]\s+(.+)$/.exec(lines[index].trim());
+        if (!item) break;
+        items.push(item[1]);
+        index += 1;
+      }
+      blocks.push(
+        <ol key={`ol-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length) {
+      const next = lines[index].trim();
+      if (!next || /^(#{1,3})\s+/.test(next) || /^[-*]\s+/.test(next) || /^\d+[.)]\s+/.test(next)) break;
+      paragraph.push(next);
+      index += 1;
+    }
+    blocks.push(<p key={`p-${index}`}>{renderInlineMarkdown(paragraph.join(' '))}</p>);
   }
 
-  return (
-    <div className="ashi-cal" ref={wrapRef}>
-      <button type="button" className="ashi-cal-trigger" onClick={() => setOpen((value) => !value)}>
-        <span className="ashi-cal-trigger-label">Due date</span>
-        <span className="ashi-cal-trigger-value">{formatLong(selected)}</span>
-        <span className="ashi-cal-trigger-chevron" aria-hidden>▾</span>
-      </button>
-      {open ? (
-        <div className="ashi-cal-pop" role="dialog" aria-label="Pick a date">
-          <div className="ashi-cal-head">
-            <button type="button" className="ashi-cal-nav" onClick={() => shift(-1)} aria-label="Previous month">‹</button>
-            <span className="ashi-cal-month">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-            <button type="button" className="ashi-cal-nav" onClick={() => shift(1)} aria-label="Next month">›</button>
-          </div>
-          <div className="ashi-cal-weekdays">
-            {WEEKDAY_LABELS.map((label) => (
-              <span key={label}>{label}</span>
-            ))}
-          </div>
-          <div className="ashi-cal-grid">
-            {weeks.map((week) =>
-              week.days.map((day) => {
-                const key = toDateKey(day);
-                const inMonth = day.getMonth() === viewMonth;
-                const disabled = key < minKey;
-                const isSelected = key === selectedKey;
-                const isToday = key === todayKey;
-                return (
-                  <button
-                    type="button"
-                    key={key}
-                    disabled={disabled}
-                    className={`ashi-cal-day${inMonth ? '' : ' is-out'}${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}`}
-                    onClick={() => {
-                      onSelect(startOfLocalDay(day));
-                      setOpen(false);
-                    }}
-                  >
-                    {day.getDate()}
-                  </button>
-                );
-              }),
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
+  return blocks.length ? blocks : text;
 }
 
 export function AshiPage() {
   const { store, loaded, persist, updateTodo, deleteTodo } = useTodoStore();
   const today = useMemo(() => startOfLocalDay(new Date()), []);
   const [title, setTitle] = useState('');
-  const [date, setDate] = useState<Date>(today);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
   const [status, setStatus] = useState('');
   const [question, setQuestion] = useState('');
   const [chat, setChat] = useState<ChatMessage[]>([]);
@@ -139,23 +126,16 @@ export function AshiPage() {
 
   const tasks = useMemo(() => sortedTodos(store.todos), [store.todos]);
 
+  const imagePreview = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ''), [imageFile]);
+
   useEffect(() => {
-    if (!imageFile) {
-      setImagePreview('');
-      return;
-    }
-    const url = URL.createObjectURL(imageFile);
-    setImagePreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+    if (!imagePreview) return;
+    return () => URL.revokeObjectURL(imagePreview);
+  }, [imagePreview]);
 
   async function addTask() {
     const cleanTitle = title.trim();
     if (!cleanTitle) return;
-    if (startOfLocalDay(date).getTime() < today.getTime()) {
-      setStatus('Pick today or later.');
-      return;
-    }
     setStatus('');
     try {
       const attachments = imageFile ? [await uploadTodoAttachment(imageFile)] : undefined;
@@ -164,7 +144,7 @@ export function AshiPage() {
         id: uid(),
         title: cleanTitle,
         bucket: 'today',
-        deadline: endOfDay(date).toISOString(),
+        deadline: endOfDay(today).toISOString(),
         done: false,
         attachments,
         dimensionValues: {},
@@ -213,7 +193,6 @@ export function AshiPage() {
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
-          <CalendarPicker selected={date} onSelect={setDate} minDate={today} />
           <label className={`ashi-image-pick${imagePreview ? ' has-image' : ''}`}>
             {imagePreview ? (
               <span className="ashi-image-thumb">
@@ -266,6 +245,21 @@ export function AshiPage() {
                   </button>
                   <button
                     type="button"
+                    className="ashi-task-btn is-edit"
+                    onClick={() => {
+                      const next = window.prompt('Edit task', todo.title);
+                      if (next === null) return;
+                      const trimmed = next.trim();
+                      if (!trimmed || trimmed === todo.title) return;
+                      void updateTodo(todo.id, (item) => ({ ...item, title: trimmed }));
+                    }}
+                    aria-label="Edit task"
+                    title="Edit"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
                     className="ashi-task-btn is-delete"
                     onClick={() => {
                       if (!window.confirm(`Delete "${todo.title}"? This cannot be undone.`)) return;
@@ -294,7 +288,7 @@ export function AshiPage() {
           {chat.length === 0 ? <p>Ask: indu se kya kaam hai, monday ko kya hai, gajnan se kya lena hai.</p> : null}
           {chat.map((message, index) => (
             <div key={`${message.role}-${index}`} className={`ashi-chat-msg is-${message.role}`}>
-              {message.text}
+              {renderStructuredText(message.text)}
             </div>
           ))}
         </div>
