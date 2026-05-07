@@ -1,0 +1,5 @@
+.devserver*.log
+.lh/
+clock-*.png
+clock-actions-empty.png
+mobile-*.png

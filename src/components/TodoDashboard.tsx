@@ -1,439 +1,585 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { DEFAULT_STORE, type Dimension, type SortOption, type TimeBucket, type TodoItem, type TodoStore } from '@/types/todo';
-
-const STORE_CHANGED_EVENT = 'mytodo-store-changed';
-const BUCKETS: Array<{ key: TimeBucket; label: string }> = [
-  { key: 'today', label: "Today's" },
-  { key: 'week', label: 'This Week' },
-  { key: 'month', label: 'This Month' },
-  { key: 'year', label: 'This Year' },
-  { key: 'nextYear', label: 'Next Year' },
-];
+import type { TodoItem } from '@/types/todo';
+import {
+  MONTH_SHORT_NAMES,
+  PLANNER_YEAR,
+  clampPlannerDate,
+  endOfDay,
+  fromDateKey,
+  getMonthWeeks,
+  getWeekForDate,
+  parseDate,
+  sameLocalDay,
+  toDateKey,
+} from '@/lib/planner-date';
+import { useTodoStore } from './useTodoStore';
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function endOfDay(date: Date): Date {
-  const out = new Date(date);
-  out.setHours(23, 59, 59, 999);
-  return out;
-}
-
-function autoDeadlineForBucket(bucket: TimeBucket): string | undefined {
-  const now = new Date();
-  if (bucket === 'completed') return undefined;
-
-  if (bucket === 'today') return endOfDay(now).toISOString();
-
-  if (bucket === 'week') {
-    const sunday = new Date(now);
-    const daysUntilSunday = (7 - sunday.getDay()) % 7;
-    sunday.setDate(sunday.getDate() + daysUntilSunday);
-    return endOfDay(sunday).toISOString();
-  }
-
-  if (bucket === 'month') return endOfDay(new Date(now.getFullYear(), now.getMonth() + 1, 0)).toISOString();
-  if (bucket === 'year') return endOfDay(new Date(now.getFullYear(), 11, 31)).toISOString();
-
-  return endOfDay(new Date(now.getFullYear() + 1, 11, 31)).toISOString();
-}
-
-function at(value: string | undefined): number {
-  if (!value) return Number.POSITIVE_INFINITY;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-}
-
-function sortTodos(todos: TodoItem[], sort: SortOption, dimensions: Dimension[]): TodoItem[] {
-  const dim = sort.dimensionId ? dimensions.find((d) => d.id === sort.dimensionId) : null;
-
-  return [...todos].sort((a, b) => {
-    const deadlineFirst = at(a.deadline) - at(b.deadline);
-    if (deadlineFirst !== 0) return deadlineFirst;
-
-    if (sort.field === 'dimension' && dim) {
-      const av = (a.dimensionValues[dim.id] ?? '').trim();
-      const bv = (b.dimensionValues[dim.id] ?? '').trim();
-      const ao = dim.valueOrder[av] ?? 9999;
-      const bo = dim.valueOrder[bv] ?? 9999;
-      if (ao !== bo) return ao - bo;
-      return av.localeCompare(bv);
-    }
-
-    if (sort.field === 'scheduledAt') return at(a.scheduledAt) - at(b.scheduledAt);
-    if (sort.field === 'createdAt') return at(a.createdAt) - at(b.createdAt);
-    return at(a.deadline) - at(b.deadline);
-  });
-}
-
 function taskClockTime(todo: TodoItem): Date | null {
   const value = todo.scheduledAt ?? todo.deadline;
-  if (!value) return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return parseDate(value);
 }
 
-export function TodoDashboard() {
-  const [store, setStore] = useState<TodoStore>(DEFAULT_STORE);
-  const [loaded, setLoaded] = useState(false);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
+function taskDate(todo: TodoItem): Date | null {
+  return parseDate(todo.scheduledAt) ?? parseDate(todo.deadline);
+}
 
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
-  const [specificDeadline, setSpecificDeadline] = useState(false);
-  const [deadline, setDeadline] = useState('');
-  const [scheduledAt, setScheduledAt] = useState('');
-  const [bucket, setBucket] = useState<TimeBucket>('today');
-  const [dimValues, setDimValues] = useState<Record<string, string>>({});
+const BUBBLE_SLOTS = [
+  { r: 32, da: 0 },
+  { r: 24, da: -7 },
+  { r: 24, da: 7 },
+  { r: 39, da: -5 },
+  { r: 39, da: 5 },
+];
+
+type Period = 'AM' | 'PM';
+type ClockKind = 'repetitive' | 'oneTimer';
+const CLOCK_COLUMNS: Array<{ kind: ClockKind; label: string; bucketKey: 'rep' | 'one' }> = [
+  { kind: 'repetitive', label: 'repetitive', bucketKey: 'rep' },
+  { kind: 'oneTimer', label: 'one timer', bucketKey: 'one' },
+];
+type PendingAction = { kind: 'complete' | 'delete'; todo: TodoItem };
+type SelectedBubble = { todo: TodoItem; angle: number; radius: number; faceKey: string; cloudX: string } | null;
+
+export function TodoDashboard() {
+  const { store, loaded, persist, updateTodo, deleteTodo } = useTodoStore();
+  const [selectedDate, setSelectedDate] = useState(() => clampPlannerDate(new Date()));
+  const [dateIsLive, setDateIsLive] = useState(true);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    async function refreshServerDate() {
       try {
-        const r = await fetch('/api/todos');
-        if (!r.ok) return;
-        setStore((await r.json()) as TodoStore);
-      } finally {
-        setLoaded(true);
+        const response = await fetch('/api/time', { cache: 'no-store' });
+        if (!response.ok) return;
+        const data = (await response.json()) as { now?: string };
+        const parsed = data.now ? new Date(data.now) : null;
+        if (!cancelled && parsed && !Number.isNaN(parsed.getTime())) {
+          setSelectedDate((current) => (dateIsLive ? clampPlannerDate(parsed) : current));
+        }
+      } catch {
+        /* browser clock remains the fallback */
       }
-    })();
-  }, []);
+    }
+    void refreshServerDate();
+    const timer = window.setInterval(() => {
+      setSelectedDate((current) => (dateIsLive ? clampPlannerDate(new Date()) : current));
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [dateIsLive]);
 
-  async function persist(next: TodoStore, autoSync = false) {
-    setStore(next);
-    await fetch('/api/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(next),
-    });
-    window.dispatchEvent(new CustomEvent(STORE_CHANGED_EVENT, { detail: { autoSync } }));
+  const selectedWeeks = useMemo(() => getMonthWeeks(PLANNER_YEAR, selectedDate.getMonth()), [selectedDate]);
+  const selectedWeek = useMemo(() => getWeekForDate(selectedDate), [selectedDate]);
+
+  function setManualDate(date: Date) {
+    setDateIsLive(false);
+    setSelectedDate(clampPlannerDate(date));
   }
 
-  const byBucket = useMemo(() => {
-    const grouped: Record<TimeBucket, TodoItem[]> = {
-      today: [],
-      week: [],
-      month: [],
-      year: [],
-      nextYear: [],
-      completed: [],
+  const todayTodos = useMemo(
+    () =>
+      store.todos.filter((todo) => {
+        if (todo.bucket !== 'today' || todo.done) return false;
+        const date = taskDate(todo);
+        return date ? sameLocalDay(date, selectedDate) : dateIsLive && sameLocalDay(new Date(), selectedDate);
+      }),
+    [store.todos, selectedDate, dateIsLive],
+  );
+
+  const bubbleSets = useMemo(() => {
+    const make = () => new Map<number, Array<{ todo: TodoItem; time: Date }>>();
+    const buckets: Record<'rep' | 'one', { am: Map<number, Array<{ todo: TodoItem; time: Date }>>; pm: Map<number, Array<{ todo: TodoItem; time: Date }>> }> = {
+      rep: { am: make(), pm: make() },
+      one: { am: make(), pm: make() },
     };
-
-    for (const todo of store.todos) grouped[todo.bucket].push(todo);
-    for (const key of Object.keys(grouped) as TimeBucket[]) {
-      grouped[key] = sortTodos(grouped[key], store.bucketSort[key], store.dimensions);
+    for (const todo of todayTodos) {
+      const time = taskClockTime(todo);
+      if (!time) continue;
+      const kind = todo.repetitive ? 'rep' : 'one';
+      const period = time.getHours() >= 12 ? 'pm' : 'am';
+      const hour = time.getHours() % 12 || 12;
+      const groups = buckets[kind][period];
+      const arr = groups.get(hour) ?? [];
+      arr.push({ todo, time });
+      groups.set(hour, arr);
     }
-
-    return grouped;
-  }, [store]);
-
-  const smartGroups = useMemo(() => {
-    const active = store.todos.filter((todo) => !todo.done && todo.bucket !== 'completed');
-    const locationDim = store.dimensions.find((d) => d.name.toLowerCase().includes('location'));
-    const situationDim = store.dimensions.find((d) => d.name.toLowerCase().includes('situation'));
-    const map = new Map<string, TodoItem[]>();
-
-    for (const todo of active) {
-      const location = locationDim ? (todo.dimensionValues[locationDim.id] ?? '').trim() : '';
-      const situation = situationDim ? (todo.dimensionValues[situationDim.id] ?? '').trim() : '';
-
-      if (location) {
-        const key = `${todo.bucket}::location::${location.toLowerCase()}`;
-        map.set(key, [...(map.get(key) ?? []), todo]);
+    const build = (groups: Map<number, Array<{ todo: TodoItem; time: Date }>>) => {
+      const out: Array<{ todo: TodoItem; time: Date; angle: number; radius: number }> = [];
+      for (const [hour, items] of groups) {
+        const baseAngle = (hour - 0.5) * 30;
+        items.slice(0, 5).forEach((item, i) => {
+          const slot = BUBBLE_SLOTS[i];
+          out.push({ todo: item.todo, time: item.time, angle: baseAngle + slot.da, radius: slot.r });
+        });
       }
-      if (situation) {
-        const key = `${todo.bucket}::situation::${situation.toLowerCase()}`;
-        map.set(key, [...(map.get(key) ?? []), todo]);
-      }
+      return out;
+    };
+    return {
+      rep: { am: build(buckets.rep.am), pm: build(buckets.rep.pm) },
+      one: { am: build(buckets.one.am), pm: build(buckets.one.pm) },
+    };
+  }, [todayTodos]);
+
+  const todayClockTasks = useMemo(
+    () =>
+      todayTodos
+        .map((todo) => {
+          const time = taskClockTime(todo);
+          return time ? { todo, time } : null;
+        })
+        .filter((item): item is { todo: TodoItem; time: Date } => Boolean(item))
+        .sort((a, b) => {
+          const am = a.time.getHours() * 60 + a.time.getMinutes();
+          const bm = b.time.getHours() * 60 + b.time.getMinutes();
+          if (am !== bm) return am - bm;
+          return a.time.getTime() - b.time.getTime();
+        }),
+    [todayTodos],
+  );
+
+  const untimedDayTasks = useMemo(
+    () => todayTodos.filter((todo) => !todo.scheduledAt),
+    [todayTodos],
+  );
+
+  const [bubbleDragId, setBubbleDragId] = useState<string | null>(null);
+  const [popupSlot, setPopupSlot] = useState<{ hour: number; period: Period; kind: ClockKind } | null>(null);
+  const [quickTitle, setQuickTitle] = useState('');
+  const [quickNotes, setQuickNotes] = useState('');
+  const [quickDimValues, setQuickDimValues] = useState<Record<string, string>>({});
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [selectedBubble, setSelectedBubble] = useState<SelectedBubble>(null);
+
+  useEffect(() => {
+    if (!pendingAction) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPendingAction(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingAction]);
+
+  function hourToH24(hour: number, period: Period): number {
+    if (hour === 12) return period === 'PM' ? 12 : 0;
+    return period === 'PM' ? hour + 12 : hour;
+  }
+
+  async function moveBubbleToHour(todoId: string, hour: number, period: Period, kind: ClockKind) {
+    const todo = store.todos.find((t) => t.id === todoId);
+    if (!todo) return;
+    const base = todo.scheduledAt ? new Date(todo.scheduledAt) : selectedDate;
+    const next = new Date(base);
+    next.setHours(hourToH24(hour, period), 0, 0, 0);
+    await updateTodo(todoId, (t) => ({
+      ...t,
+      bucket: 'today',
+      deadline: endOfDay(selectedDate).toISOString(),
+      scheduledAt: next.toISOString(),
+      repetitive: kind === 'repetitive',
+    }));
+    setSelectedBubble(null);
+  }
+
+  async function runPendingAction() {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    setPendingAction(null);
+    setSelectedBubble(null);
+    if (action.kind === 'complete') {
+      await updateTodo(action.todo.id, (t) => ({ ...t, bucket: 'completed', done: true }));
+      return;
     }
+    await deleteTodo(action.todo.id);
+  }
 
-    return [...map.entries()]
-      .map(([key, todos]) => ({ key, todos }))
-      .filter((group) => group.todos.length >= 2)
-      .slice(0, 8);
-  }, [store]);
+  function openHourPopup(hour: number, period: Period, kind: ClockKind) {
+    setSelectedBubble(null);
+    setPopupSlot({ hour, period, kind });
+    setQuickTitle('');
+    setQuickNotes('');
+    setQuickDimValues({});
+  }
 
-  const todayClockTasks = useMemo(() => {
-    return byBucket.today
-      .map((todo) => {
-        const time = taskClockTime(todo);
-        if (!time) return null;
-
-        const minutes = time.getHours() * 60 + time.getMinutes();
-        const angle = (minutes / 720) * 360;
-
-        return {
-          todo,
-          time,
-          angle,
-        };
-      })
-      .filter((item): item is { todo: TodoItem; time: Date; angle: number } => Boolean(item))
-      .sort((a, b) => a.time.getTime() - b.time.getTime())
-      .map((item, index) => ({
-        ...item,
-        ring: index % 3,
-      }));
-  }, [byBucket.today]);
-
-  async function addTodo() {
-    const cleanTitle = title.trim();
+  async function addQuickTodo() {
+    if (!popupSlot) return;
+    const cleanTitle = quickTitle.trim();
     if (!cleanTitle) return;
-
-    const now = new Date().toISOString();
-    const resolvedDeadline = specificDeadline ? (deadline || undefined) : autoDeadlineForBucket(bucket);
+    const now = new Date();
+    const scheduled = new Date(selectedDate);
+    scheduled.setHours(hourToH24(popupSlot.hour, popupSlot.period), 0, 0, 0);
+    const nowIso = now.toISOString();
     const todo: TodoItem = {
       id: uid(),
       title: cleanTitle,
-      notes: notes.trim() || undefined,
-      bucket,
-      deadline: resolvedDeadline,
-      scheduledAt: scheduledAt || undefined,
-      done: bucket === 'completed',
-      dimensionValues: Object.fromEntries(Object.entries(dimValues).filter(([, value]) => value.trim())),
-      createdAt: now,
-      updatedAt: now,
+      notes: quickNotes.trim() || undefined,
+      bucket: 'today',
+      deadline: endOfDay(selectedDate).toISOString(),
+      scheduledAt: scheduled.toISOString(),
+      done: false,
+      repetitive: popupSlot.kind === 'repetitive',
+      dimensionValues: Object.fromEntries(Object.entries(quickDimValues).filter(([, v]) => v.trim())),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
-
-    await persist({ ...store, todos: [todo, ...store.todos], updatedAt: now });
-    setTitle('');
-    setNotes('');
-    setSpecificDeadline(false);
-    setDeadline('');
-    setScheduledAt('');
-    setBucket('today');
-    setDimValues({});
+    await persist({ ...store, todos: [todo, ...store.todos], updatedAt: nowIso });
+    setPopupSlot(null);
   }
 
-  async function updateTodo(todoId: string, updater: (todo: TodoItem) => TodoItem) {
-    const nextTodos = store.todos.map((todo) =>
-      todo.id === todoId ? { ...updater(todo), updatedAt: new Date().toISOString() } : todo,
+  function chooseBubble(todo: TodoItem, angle: number, radius: number, faceKey: string) {
+    setPopupSlot(null);
+    const normalizedAngle = ((angle % 360) + 360) % 360;
+    const cloudX =
+      normalizedAngle > 180 && normalizedAngle < 330
+        ? '34cqi'
+        : normalizedAngle > 30 && normalizedAngle < 180
+          ? '-34cqi'
+          : '0px';
+    setSelectedBubble((current) =>
+      current?.todo.id === todo.id && current.faceKey === faceKey ? null : { todo, angle, radius, faceKey, cloudX },
     );
-    await persist({ ...store, todos: nextTodos, updatedAt: new Date().toISOString() });
-  }
-
-  async function deleteTodo(todoId: string) {
-    await persist({
-      ...store,
-      todos: store.todos.filter((todo) => todo.id !== todoId),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async function onDrop(target: TimeBucket) {
-    if (!draggedId) return;
-    await updateTodo(draggedId, (todo) => ({ ...todo, bucket: target, done: target === 'completed' }));
-    setDraggedId(null);
   }
 
   if (!loaded) return <section className="panel">Loading your board...</section>;
 
   return (
-    <div className="board-wrap">
-      <section className="hero-shell panel">
-        <div className="hero-copy">
-          <span className="hero-kicker">TaskTrail</span>
-          <div className="hero-stats">
-            <span className="hero-pill">{store.todos.filter((todo) => !todo.done).length} active tasks</span>
-            <span className="hero-pill">{store.dimensions.length} custom dimensions</span>
-            <span className="hero-pill">{smartGroups.length} smart groups</span>
-          </div>
-        </div>
-        <div className="hero-orbs" aria-hidden>
-          <span className="hero-orb hero-orb-big" />
-          <span className="hero-orb hero-orb-mid" />
-          <span className="hero-orb hero-orb-small" />
-        </div>
-      </section>
-
+    <div className="board-wrap home-shell">
       <section className="panel clock-panel">
         <div className="panel-head">
           <div>
             <span className="section-eyebrow">Today Clock</span>
-            <h2>Time map for today&apos;s tasks</h2>
+            <h2>Time map for {selectedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</h2>
           </div>
           <span className="section-chip">{todayClockTasks.length} timed tasks</span>
         </div>
-        <div className="clock-layout">
-          <div className="task-clock">
-            <div className="clock-face">
-              <div className="clock-cross clock-cross-vertical" />
-              <div className="clock-cross clock-cross-horizontal" />
-              {Array.from({ length: 12 }, (_, index) => {
-                const hour = index + 1;
-                const angle = (hour / 12) * 360;
-                return (
-                  <span
-                    key={hour}
-                    className="clock-hour"
-                    style={{ ['--angle' as string]: `${angle}deg` }}
-                  >
-                    {hour}
-                  </span>
-                );
-              })}
-              {todayClockTasks.map(({ todo, time, angle, ring }) => (
-                <button
-                  key={todo.id}
-                  type="button"
-                  className="clock-task"
-                  title={`${todo.title} · ${time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
-                  style={{
-                    ['--angle' as string]: `${angle}deg`,
-                    ['--radius' as string]: `${88 - ring * 18}px`,
-                  }}
-                >
-                  <span className="clock-task-time">
-                    {time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                  </span>
-                  <span className="clock-task-title">{todo.title}</span>
-                </button>
+        <div className="clock-date-filter" aria-label="Day filters for 2026">
+          <label>
+            Month
+            <select
+              value={selectedDate.getMonth()}
+              onChange={(event) => {
+                const nextMonth = Number(event.target.value);
+                const maxDay = new Date(PLANNER_YEAR, nextMonth + 1, 0).getDate();
+                setManualDate(new Date(PLANNER_YEAR, nextMonth, Math.min(selectedDate.getDate(), maxDay)));
+              }}
+            >
+              {MONTH_SHORT_NAMES.map((name, index) => <option key={name} value={index}>{name}</option>)}
+            </select>
+          </label>
+          <label>
+            Week
+            <select
+              value={selectedWeek.index}
+              onChange={(event) => {
+                const nextWeek = selectedWeeks.find((week) => week.index === Number(event.target.value)) ?? selectedWeeks[0];
+                setManualDate(nextWeek.days[0]);
+              }}
+            >
+              {selectedWeeks.map((week) => (
+                <option key={week.index} value={week.index}>week{week.index}</option>
               ))}
-              <span className="clock-center" />
-            </div>
-          </div>
-          <div className="clock-side-list">
-            {todayClockTasks.length > 0 ? (
-              todayClockTasks.map(({ todo, time }) => (
-                <article key={todo.id} className="clock-side-item">
-                  <strong>{time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong>
-                  <span>{todo.title}</span>
-                </article>
-              ))
-            ) : (
-              <p className="clock-empty">Add a time to today&apos;s tasks and they&apos;ll appear on the clock.</p>
-            )}
-          </div>
+            </select>
+          </label>
+          <label>
+            Day
+            <select value={toDateKey(selectedDate)} onChange={(event) => setManualDate(fromDateKey(event.target.value))}>
+              {selectedWeek.days.map((day) => (
+                <option key={toDateKey(day)} value={toDateKey(day)}>
+                  {day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className={dateIsLive ? 'planner-chip is-active' : 'planner-chip'}
+            onClick={() => {
+              setDateIsLive(true);
+              setSelectedDate(clampPlannerDate(new Date()));
+            }}
+          >
+            live
+          </button>
         </div>
-      </section>
-
-      <section className="workspace-grid">
-        <section className="panel add-panel">
-          <div className="panel-head">
-            <div>
-              <span className="section-eyebrow">Create</span>
-              <h2>Add Todo</h2>
-            </div>
-            <span className="section-chip">Quick capture</span>
-          </div>
-          <div className="form-grid">
-            <input placeholder="Task title" value={title} onChange={(e) => setTitle(e.target.value)} />
-            <textarea placeholder="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
-            <label>
-              Deadline
-              <button
-                type="button"
-                className={specificDeadline ? 'btn-3d' : 'btn-ghost'}
-                onClick={() => setSpecificDeadline((prev) => !prev)}
-              >
-                {specificDeadline ? 'Specific' : 'Auto'}
-              </button>
-            </label>
-            {specificDeadline ? (
-              <label>Deadline<input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></label>
-            ) : null}
-            <div className="form-subsection">
-              <span className="subsection-label">Time Bucket</span>
-              <label>Bucket<select value={bucket} onChange={(e) => setBucket(e.target.value as TimeBucket)}>{BUCKETS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}<option value="completed">Completed</option></select></label>
-            </div>
-            {store.dimensions.map((dim) => (
-              <label key={dim.id}>{dim.name}
-                <input
-                  placeholder={dim.optional ? 'Optional' : 'Required'}
-                  value={dimValues[dim.id] ?? ''}
-                  onChange={(e) => setDimValues((prev) => ({ ...prev, [dim.id]: e.target.value }))}
-                />
-              </label>
+        <div className="clock-layout">
+          <div className="clock-grid">
+            {CLOCK_COLUMNS.map((col) => (
+              <div key={col.kind} className={`clock-column clock-column-${col.kind}`}>
+                <h3 className="clock-column-title">{col.label}</h3>
+                <div className="clock-pair">
+                  {(['AM', 'PM'] as const).map((period) => {
+                    const bubbles =
+                      period === 'AM'
+                        ? bubbleSets[col.bucketKey].am
+                        : bubbleSets[col.bucketKey].pm;
+                    return (
+                      <div key={period} className="task-clock">
+                        <span className="clock-period-label">{period}</span>
+                        {(() => {
+                          const faceKey = `${col.kind}-${period}`;
+                          return (
+                        <div className={`clock-face clock-face-${period.toLowerCase()} clock-face-${col.kind}`}>
+                          {Array.from({ length: 12 }, (_, index) => {
+                            const hour = index + 1;
+                            const angle = (hour - 0.5) * 30;
+                            return (
+                              <button
+                                key={`sector-${col.kind}-${period}-${hour}`}
+                                type="button"
+                                className="clock-sector"
+                                style={{ ['--angle' as string]: `${angle}deg` }}
+                                onDoubleClick={() => openHourPopup(hour, period, col.kind)}
+                                onDragOver={(e) => {
+                                  if (bubbleDragId) e.preventDefault();
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  if (bubbleDragId) {
+                                    void moveBubbleToHour(bubbleDragId, hour, period, col.kind);
+                                    setBubbleDragId(null);
+                                  }
+                                }}
+                                aria-label={`Add ${col.label} task at ${hour} ${period}`}
+                              />
+                            );
+                          })}
+                          <div className="clock-cross clock-cross-vertical" />
+                          <div className="clock-cross clock-cross-horizontal" />
+                          {Array.from({ length: 12 }, (_, index) => {
+                            const hour = index + 1;
+                            const angle = (hour / 12) * 360;
+                            return (
+                              <span
+                                key={`label-${col.kind}-${period}-${hour}`}
+                                className="clock-hour"
+                                style={{ ['--angle' as string]: `${angle}deg` }}
+                              >
+                                {hour}
+                              </span>
+                            );
+                          })}
+                          {bubbles.map(({ todo, angle, radius }) => (
+                            <span
+                              key={todo.id}
+                              className={`clock-bubble ${selectedBubble?.todo.id === todo.id ? 'is-selected' : ''}`}
+                              draggable
+                              role="button"
+                              tabIndex={0}
+                              onDragStart={(e) => {
+                                e.dataTransfer.effectAllowed = 'move';
+                                e.dataTransfer.setData('text/plain', todo.id);
+                                setBubbleDragId(todo.id);
+                              }}
+                              onDragEnd={() => setBubbleDragId(null)}
+                              onClick={() => chooseBubble(todo, angle, radius, faceKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  chooseBubble(todo, angle, radius, faceKey);
+                                }
+                              }}
+                              style={{
+                                ['--angle' as string]: `${angle}deg`,
+                                ['--radius' as string]: `${radius}cqi`,
+                              }}
+                            >
+                              <span className="clock-bubble-tip">{todo.title}</span>
+                            </span>
+                          ))}
+                          {selectedBubble?.faceKey === faceKey ? (
+                            <div
+                              className="clock-bubble-cloud"
+                              style={{
+                                ['--angle' as string]: `${selectedBubble.angle}deg`,
+                                ['--radius' as string]: `${selectedBubble.radius}cqi`,
+                                ['--cloud-x' as string]: selectedBubble.cloudX,
+                              }}
+                            >
+                              <strong>{selectedBubble.todo.title}</strong>
+                              <div className="clock-cloud-actions">
+                                <button
+                                  type="button"
+                                  className="clock-action-btn clock-action-complete"
+                                  aria-label={`Mark ${selectedBubble.todo.title} completed`}
+                                  title="Mark completed"
+                                  onClick={() => setPendingAction({ kind: 'complete', todo: selectedBubble.todo })}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                                    <path d="M3 8.2 6.4 11.5 13 4.5" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="clock-action-btn clock-action-delete"
+                                  aria-label={`Delete ${selectedBubble.todo.title}`}
+                                  title="Delete"
+                                  onClick={() => setPendingAction({ kind: 'delete', todo: selectedBubble.todo })}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                                    <path d="M4 4 12 12M12 4 4 12" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          <span className="clock-center" />
+                        </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ))}
           </div>
-          <div className="cta-row">
-            <button type="button" className="btn-3d btn-hero" onClick={() => void addTodo()}>Add Task</button>
-          </div>
-        </section>
-      </section>
-
-      {smartGroups.length > 0 && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <span className="section-eyebrow">Combine</span>
-              <h2>Auto Groups</h2>
-            </div>
-            <span className="section-chip">Smart batching</span>
-          </div>
-          <div className="group-grid">
-            {smartGroups.map((group) => {
-              const [timeBucket, kind, value] = group.key.split('::');
-              return (
-                <article key={group.key} className="group-card">
-                  <h3>{timeBucket} | {kind}: {value}</h3>
-                  <p>{group.todos.length} related tasks</p>
-                  <ul>{group.todos.map((todo) => <li key={todo.id}>{todo.title}</li>)}</ul>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      <section className="board-scroll">
-        {BUCKETS.map((b) => (
-          <article key={b.key} className="lane" onDragOver={(e) => e.preventDefault()} onDrop={() => void onDrop(b.key)}>
-            <header className="lane-head">
-              <div className="lane-title-row">
-                <h3>{b.label}</h3>
-                <span className="lane-count">{byBucket[b.key].length}</span>
+          {untimedDayTasks.length > 0 ? (
+            <div className="day-unscheduled-strip" aria-label="Tasks for this day without a specific time">
+              <strong>Drag to clock</strong>
+              <div>
+                {untimedDayTasks.map((todo) => (
+                  <span
+                    key={todo.id}
+                    className="day-unscheduled-task"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', todo.id);
+                      setBubbleDragId(todo.id);
+                    }}
+                    onDragEnd={() => setBubbleDragId(null)}
+                  >
+                    {todo.title}
+                  </span>
+                ))}
               </div>
-              <label>Sort
-                <select
-                  value={`${store.bucketSort[b.key].field}:${store.bucketSort[b.key].dimensionId ?? ''}`}
-                  onChange={(e) => {
-                    const [field, dimensionId] = e.target.value.split(':');
-                    const nextSort: SortOption =
-                      field === 'dimension' ? { field: 'dimension', dimensionId } : { field: field as SortOption['field'] };
-                    void persist({
-                      ...store,
-                      bucketSort: { ...store.bucketSort, [b.key]: nextSort },
-                      updatedAt: new Date().toISOString(),
-                    });
-                  }}
-                >
-                  <option value="deadline:">Deadline</option>
-                  <option value="scheduledAt:">Time</option>
-                  <option value="createdAt:">Created</option>
-                  {store.dimensions.map((dim) => <option key={dim.id} value={`dimension:${dim.id}`}>{dim.name} mapping</option>)}
-                </select>
-              </label>
-            </header>
-            <div className="lane-body">
-              {byBucket[b.key].map((todo) => (
-                <article key={todo.id} className="todo-card" draggable onDragStart={() => setDraggedId(todo.id)} onDragEnd={() => setDraggedId(null)}>
-                  <h4>{todo.title}</h4>
-                  {todo.notes && <p>{todo.notes}</p>}
-                  <div className="meta-row">
-                    {todo.deadline && <span className="pill">Deadline: {new Date(todo.deadline).toLocaleString()}</span>}
-                    {todo.scheduledAt && <span className="pill">Time: {new Date(todo.scheduledAt).toLocaleString()}</span>}
-                  </div>
-                  <div className="meta-row">
-                    {store.dimensions.map((dim) => {
-                      const value = todo.dimensionValues[dim.id];
-                      if (!value) return null;
-                      return <span key={dim.id} className="pill dim-pill">{dim.name}: {value}</span>;
-                    })}
-                  </div>
-                  <div className="card-actions">
-                    <button type="button" className="btn-3d" onClick={() => void updateTodo(todo.id, (t) => ({ ...t, bucket: 'completed', done: true }))}>Complete</button>
-                    <button type="button" className="btn-ghost" onClick={() => void deleteTodo(todo.id)}>Delete</button>
-                  </div>
-                </article>
-              ))}
             </div>
-          </article>
-        ))}
+          ) : null}
+          {popupSlot ? (
+            <div className="clock-popup">
+              <div className="clock-popup-head">
+                <strong>
+                  Add {popupSlot.kind === 'repetitive' ? 'repetitive' : 'one-timer'} task at {popupSlot.hour}:00 {popupSlot.period}
+                </strong>
+                <button type="button" className="btn-ghost" onClick={() => setPopupSlot(null)}>Close</button>
+              </div>
+              <div className="form-grid">
+                <input placeholder="Task title" value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} autoFocus />
+                <textarea placeholder="Notes (optional)" value={quickNotes} onChange={(e) => setQuickNotes(e.target.value)} />
+                {store.dimensions.map((dim) => (
+                  <label key={dim.id}>{dim.name}
+                    <input
+                      placeholder={dim.optional ? 'Optional' : 'Required'}
+                      value={quickDimValues[dim.id] ?? ''}
+                      onChange={(e) => setQuickDimValues((prev) => ({ ...prev, [dim.id]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="cta-row">
+                <button type="button" className="btn-3d" onClick={() => void addQuickTodo()}>Add Task</button>
+                <button type="button" className="btn-ghost" onClick={() => setPopupSlot(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <details className="clock-side-details">
+              <summary>AM / PM task lists</summary>
+              <div className="clock-side-split">
+              {(['AM', 'PM'] as const).map((period) => {
+                const items = todayClockTasks.filter(({ time }) =>
+                  period === 'PM' ? time.getHours() >= 12 : time.getHours() < 12,
+                );
+                return (
+                  <div key={period} className="clock-side-column">
+                    <h4 className="clock-side-heading">{period} tasks list</h4>
+                    {items.length > 0 ? (
+                      items.map(({ todo, time }) => (
+                        <article key={todo.id} className="clock-side-item">
+                          <div className="clock-side-item-head">
+                            <strong>{time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong>
+                            <div className="clock-side-actions">
+                              <button
+                                type="button"
+                                className="clock-action-btn clock-action-complete"
+                                aria-label={`Mark ${todo.title} completed`}
+                                title="Mark completed"
+                                onClick={() => setPendingAction({ kind: 'complete', todo })}
+                              >
+                                <svg viewBox="0 0 16 16" aria-hidden="true">
+                                  <path d="M3 8.2 6.4 11.5 13 4.5" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="clock-action-btn clock-action-delete"
+                                aria-label={`Delete ${todo.title}`}
+                                title="Delete"
+                                onClick={() => setPendingAction({ kind: 'delete', todo })}
+                              >
+                                <svg viewBox="0 0 16 16" aria-hidden="true">
+                                  <path d="M4 4 12 12M12 4 4 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                          <span>{todo.title}</span>
+                        </article>
+                      ))
+                    ) : (
+                      <p className="clock-empty">No {period} tasks yet.</p>
+                    )}
+                  </div>
+                );
+              })}
+              </div>
+            </details>
+          )}
+        </div>
       </section>
-
+      {pendingAction && (
+        <div
+          className="confirm-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingAction(null);
+          }}
+        >
+          <section
+            className={`confirm-dialog confirm-dialog-${pendingAction.kind}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="todo-confirm-title"
+          >
+            <span className="section-eyebrow">{pendingAction.kind === 'complete' ? 'Confirm Complete' : 'Confirm Delete'}</span>
+            <h3 id="todo-confirm-title">
+              {pendingAction.kind === 'complete' ? 'Mark task completed?' : 'Delete this task?'}
+            </h3>
+            <p>
+              <strong>{pendingAction.todo.title}</strong>
+              {pendingAction.kind === 'delete' ? ' will be removed permanently.' : ' will move to completed and be added to history.'}
+            </p>
+            <div className="confirm-actions">
+              <button type="button" className="btn-ghost" onClick={() => setPendingAction(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={pendingAction.kind === 'complete' ? 'btn-3d' : 'btn-ghost confirm-danger-btn'}
+                onClick={() => void runPendingAction()}
+              >
+                {pendingAction.kind === 'complete' ? 'Mark Complete' : 'Delete'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

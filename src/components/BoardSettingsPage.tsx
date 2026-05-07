@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import type { Dimension, SortOption, TodoItem, TodoStore } from '@/types/todo';
-import { DEFAULT_STORE } from '@/types/todo';
+import { useMemo, useState } from 'react';
+import type { CompletionHistoryEntry, Dimension, SortOption, TodoItem } from '@/types/todo';
+import { useTodoStore } from './useTodoStore';
 
 function at(value: string | undefined): number {
   if (!value) return Number.POSITIVE_INFINITY;
@@ -32,38 +32,66 @@ function sortTodos(todos: TodoItem[], sort: SortOption, dimensions: Dimension[])
   });
 }
 
+function csvCell(value: unknown): string {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function completionHistoryCsv(history: CompletionHistoryEntry[]): string {
+  const headers = ['completedAt', 'title', 'notes', 'todoId', 'createdAt', 'deadline', 'scheduledAt', 'dimensionValues'];
+  const rows = history.map((entry) => [
+    entry.completedAt,
+    entry.title,
+    entry.notes ?? '',
+    entry.todoId,
+    entry.createdAt,
+    entry.deadline ?? '',
+    entry.scheduledAt ?? '',
+    JSON.stringify(entry.dimensionValues),
+  ]);
+  return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+}
+
+function downloadFile(filename: string, mimeType: string, content: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function BoardSettingsPage() {
-  const [store, setStore] = useState<TodoStore>(DEFAULT_STORE);
-  const [loaded, setLoaded] = useState(false);
+  const { store, loaded, persist, updateTodo, deleteTodo } = useTodoStore();
   const [showCompleted, setShowCompleted] = useState(true);
   const [newDimName, setNewDimName] = useState('');
   const [newDimOptional, setNewDimOptional] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch('/api/todos');
-        if (!r.ok) return;
-        setStore((await r.json()) as TodoStore);
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, []);
-
-  async function persist(next: TodoStore) {
-    setStore(next);
-    await fetch('/api/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(next),
-    });
-  }
 
   const completedTodos = useMemo(() => {
     const completed = store.todos.filter((todo) => todo.bucket === 'completed' || todo.done);
     return sortTodos(completed, store.bucketSort.completed, store.dimensions);
   }, [store]);
+
+  const completionHistory = useMemo(
+    () =>
+      [...store.completionHistory].sort((a, b) => {
+        const at = Date.parse(a.completedAt);
+        const bt = Date.parse(b.completedAt);
+        return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+      }),
+    [store.completionHistory],
+  );
+
+  function downloadCompletionHistoryJson() {
+    downloadFile('tasktrail-completion-history.json', 'application/json', JSON.stringify(completionHistory, null, 2));
+  }
+
+  function downloadCompletionHistoryCsv() {
+    downloadFile('tasktrail-completion-history.csv', 'text/csv;charset=utf-8', completionHistoryCsv(completionHistory));
+  }
 
   async function addDimension() {
     const name = newDimName.trim();
@@ -98,24 +126,6 @@ export function BoardSettingsPage() {
         delete next[dimId];
         return { ...todo, dimensionValues: next };
       }),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async function updateTodo(todoId: string, updater: (todo: TodoItem) => TodoItem) {
-    await persist({
-      ...store,
-      todos: store.todos.map((todo) =>
-        todo.id === todoId ? { ...updater(todo), updatedAt: new Date().toISOString() } : todo,
-      ),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async function deleteTodo(todoId: string) {
-    await persist({
-      ...store,
-      todos: store.todos.filter((todo) => todo.id !== todoId),
       updatedAt: new Date().toISOString(),
     });
   }
@@ -221,6 +231,34 @@ export function BoardSettingsPage() {
                 ))}
               </div>
             )}
+            <div className="history-panel">
+              <div className="history-head">
+                <div>
+                  <span className="section-eyebrow">History</span>
+                  <h3>Completion History</h3>
+                </div>
+                <div className="history-actions">
+                  <button type="button" className="btn-ghost" disabled={completionHistory.length === 0} onClick={downloadCompletionHistoryJson}>
+                    JSON
+                  </button>
+                  <button type="button" className="btn-ghost" disabled={completionHistory.length === 0} onClick={downloadCompletionHistoryCsv}>
+                    CSV
+                  </button>
+                </div>
+              </div>
+              {completionHistory.length > 0 ? (
+                <div className="history-list">
+                  {completionHistory.map((entry) => (
+                    <article key={entry.id} className="history-item">
+                      <strong>{entry.title}</strong>
+                      <span>{new Date(entry.completedAt).toLocaleString()}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="clock-empty">No completion history yet.</p>
+              )}
+            </div>
           </section>
         </div>
       </section>

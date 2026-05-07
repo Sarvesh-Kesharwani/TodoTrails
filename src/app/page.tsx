@@ -1,5 +1,5 @@
-﻿import { TodoDashboard } from '@/components/TodoDashboard';
+import { TodoWorkspace } from '@/components/TodoWorkspace';
 
 export default function HomePage() {
-  return <TodoDashboard />;
+  return <TodoWorkspace initialView="today" />;
 }

@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import { Baloo_2 } from 'next/font/google';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Suspense } from 'react';
 import { AuthButton } from '@/components/AuthButton';
+import { FastWorkspaceNav } from '@/components/FastWorkspaceNav';
 import { SyncButton } from '@/components/SyncButton';
 import './globals.css';
 
@@ -32,13 +32,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </Link>
           <div className="top-actions">
-            <Link href="/settings" className="btn-ghost topbar-link">
-              Settings
-            </Link>
+            <FastWorkspaceNav />
             <SyncButton />
-            <Suspense fallback={null}>
-              <AuthButton />
-            </Suspense>
+            <AuthButton />
           </div>
         </header>
         <main>{children}</main>

@@ -1,5 +1,5 @@
-import { BoardSettingsPage } from '@/components/BoardSettingsPage';
+import { TodoWorkspace } from '@/components/TodoWorkspace';
 
 export default function SettingsPage() {
-  return <BoardSettingsPage />;
+  return <TodoWorkspace initialView="settings" />;
 }
