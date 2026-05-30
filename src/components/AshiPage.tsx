@@ -253,7 +253,6 @@ export function AshiPage() {
   const { store, loaded, persist, updateTodo, deleteTodo } = useTodoStore();
   const today = useMemo(() => startOfLocalDay(new Date()), []);
   const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [status, setStatus] = useState('');
   const [question, setQuestion] = useState('');
@@ -370,7 +369,6 @@ export function AshiPage() {
 
   async function addTask() {
     const cleanTitle = title.trim();
-    const cleanNotes = notes.trim();
     if (!cleanTitle) return;
     setStatus('');
     try {
@@ -379,7 +377,6 @@ export function AshiPage() {
       let todo: TodoItem = {
         id: uid(),
         title: cleanTitle,
-        notes: cleanNotes || undefined,
         bucket: 'today',
         deadline: endOfDay(today).toISOString(),
         done: false,
@@ -393,7 +390,6 @@ export function AshiPage() {
       if (assignedCategoryId) todo = { ...todo, ashiCategoryId: assignedCategoryId };
       await persist({ ...store, todos: [todo, ...store.todos], updatedAt: now });
       setTitle('');
-      setNotes('');
       setImageFile(null);
       setStatus(assignedCategoryId ? 'Added and categorized.' : 'Added.');
     } catch (error) {
@@ -439,6 +435,22 @@ export function AshiPage() {
       ...store,
       todos: store.todos.map((todo) => (todo.ashiCategoryId === categoryId ? { ...todo, ashiCategoryId: undefined, updatedAt: now } : todo)),
       ashiSettings: { ...store.ashiSettings, categories: categories.filter((item) => item.id !== categoryId) },
+      updatedAt: now,
+    });
+  }
+
+  async function renameCategory(categoryId: string) {
+    const category = categories.find((item) => item.id === categoryId);
+    if (!category) return;
+    const nextName = window.prompt('Rename category', category.name)?.trim();
+    if (!nextName || nextName === category.name) return;
+    const now = new Date().toISOString();
+    await persist({
+      ...store,
+      ashiSettings: {
+        ...store.ashiSettings,
+        categories: categories.map((item) => (item.id === categoryId ? { ...item, name: nextName } : item)),
+      },
       updatedAt: now,
     });
   }
@@ -512,12 +524,6 @@ export function AshiPage() {
             placeholder="task title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-          />
-          <textarea
-            className="ashi-task-input ashi-task-notes"
-            placeholder="description / details"
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
           />
           <label className={`ashi-image-pick${imagePreview ? ' has-image' : ''}`}>
             {imagePreview ? (
@@ -603,9 +609,14 @@ export function AshiPage() {
                 <span>{category.name}</span>
                 <strong>{items.length}</strong>
               </summary>
-              <button type="button" className="ashi-category-remove" onClick={() => void removeCategory(category.id)}>
-                Remove category
-              </button>
+              <div className="ashi-category-actions">
+                <button type="button" className="ashi-category-link" onClick={() => void renameCategory(category.id)}>
+                  Rename
+                </button>
+                <button type="button" className="ashi-category-link" onClick={() => void removeCategory(category.id)}>
+                  Remove
+                </button>
+              </div>
               {items.length === 0 ? <p className="ashi-empty">No tasks in this category.</p> : <div className="ashi-task-stack">{items.map(renderTaskRow)}</div>}
             </details>
           ))}

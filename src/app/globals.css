@@ -1852,12 +1852,6 @@ label {
   font-weight: 600;
 }
 
-.ashi-task-notes {
-  min-height: 92px;
-  resize: vertical;
-  align-self: stretch;
-}
-
 .ashi-task-input:focus,
 .ashi-date-select:focus {
   outline: 2px dashed var(--accent-dark);
@@ -2428,11 +2422,22 @@ label {
 
 .ashi-category-details[open] .ashi-task-stack,
 .ashi-category-details[open] .ashi-empty,
-.ashi-category-details[open] .ashi-category-remove {
+.ashi-category-details[open] .ashi-category-actions {
   margin: 0 0.65rem 0.65rem;
 }
 
-.ashi-category-remove {
+.ashi-category-details {
+  overflow: visible;
+}
+
+.ashi-category-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  justify-content: flex-start;
+}
+
+.ashi-category-link {
   justify-self: start;
   border: none;
   background: transparent;
