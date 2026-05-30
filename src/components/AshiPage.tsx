@@ -244,10 +244,9 @@ export function AshiPage() {
   const [asking, setAsking] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [classifying, setClassifying] = useState(false);
-  const [categoriesGenerating, setCategoriesGenerating] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [rulesDraft, setRulesDraft] = useState('');
   const [activeTag, setActiveTag] = useState('');
-  const categoriesTextRef = useRef<HTMLTextAreaElement | null>(null);
-  const rolloverPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const rolloverRunningRef = useRef(false);
 
   const tasks = useMemo(() => sortedTodos(store.todos), [store.todos]);
@@ -256,6 +255,8 @@ export function AshiPage() {
     return due ? sameDay(due, today) : false;
   }), [tasks, today]);
   const categories = store.ashiSettings.categories;
+  const rulesPrompt =
+    store.ashiSettings.rulesPrompt ?? store.ashiSettings.categoriesSource ?? store.ashiSettings.rolloverPrompt;
   const todayKey = useMemo(() => localDateKey(today), [today]);
 
   // All unique tag names from all tasks
@@ -316,7 +317,7 @@ export function AshiPage() {
           body: JSON.stringify({
             todos: candidates,
             categories,
-            prompt: store.ashiSettings.rolloverPrompt,
+            prompt: rulesPrompt,
             todayKey,
           }),
         });
@@ -357,17 +358,28 @@ export function AshiPage() {
         rolloverRunningRef.current = false;
       }
     })();
-  }, [categories, loaded, persist, store, today, todayKey]);
+  }, [categories, loaded, persist, rulesPrompt, store, today, todayKey]);
 
-  async function classifyWithDeepSeek(items: TodoItem[]) {
-    if (!items.length || !categories.length) return [];
+  async function classifyWithDeepSeek(items: TodoItem[], sourceCategories = categories) {
+    if (!items.length || !sourceCategories.length) return [];
     const response = await fetch('/api/ashi/classify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ todos: items, categories }),
+      body: JSON.stringify({ todos: items, categories: sourceCategories }),
     });
     const data = (await response.json()) as { assignments?: CategoryAssignment[] };
     return data.assignments ?? [];
+  }
+
+  async function generateCategoriesFromRules(text: string) {
+    const response = await fetch('/api/ashi/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = (await response.json()) as { categories?: GeneratedCategory[]; error?: string };
+    if (!response.ok || !data.categories?.length) throw new Error(data.error || 'No tags generated.');
+    return data.categories;
   }
 
   function applyAssignments(items: TodoItem[], assignments: CategoryAssignment[], updatedAt: string) {
@@ -435,21 +447,68 @@ export function AshiPage() {
   }
 
   async function organizeAllTasks() {
-    const untagged = tasks.filter((todo) => !(todo.ashiTags?.length ?? todo.ashiTaskJson?.taskTags?.length));
-    const items = categories.length ? untagged : [];
-    if (!items.length || classifying) return;
+    const cleanRules = rulesPrompt.trim();
+    if (classifying || !tasks.length) return;
+    if (!cleanRules) {
+      setRulesDraft(cleanRules);
+      setRulesOpen(true);
+      setStatus('Add Rules first.');
+      return;
+    }
     setClassifying(true);
     setStatus('');
     try {
-      const assignments = await classifyWithDeepSeek(items);
+      const nextCategories = await generateCategoriesFromRules(cleanRules);
+      const assignments = await classifyWithDeepSeek(tasks, nextCategories);
       const now = new Date().toISOString();
-      await persist({ ...store, todos: applyAssignments(store.todos, assignments, now), updatedAt: now });
-      setStatus(`Tagged ${assignments.length} task${assignments.length === 1 ? '' : 's'}.`);
+      const activeIds = new Set(tasks.map((todo) => todo.id));
+      const clearedTodos = store.todos.map((todo) =>
+        activeIds.has(todo.id)
+          ? { ...todo, ashiCategoryId: undefined, ashiTags: undefined, ashiTaskJson: undefined, updatedAt: now }
+          : todo,
+      );
+      await persist({
+        ...store,
+        todos: applyAssignments(clearedTodos, assignments, now),
+        ashiSettings: {
+          ...store.ashiSettings,
+          categories: nextCategories,
+          rulesPrompt: cleanRules,
+          categoriesSource: cleanRules,
+          rolloverPrompt: cleanRules,
+          rolloverPromptUpdatedAt: now,
+        },
+        updatedAt: now,
+      });
+      setActiveTag('');
+      setStatus(`Retagged ${assignments.length} task${assignments.length === 1 ? '' : 's'}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Organize failed.');
     } finally {
       setClassifying(false);
     }
+  }
+
+  async function saveRules() {
+    const prompt = rulesDraft.trim();
+    if (!prompt) {
+      setStatus('Rules cannot be empty.');
+      return;
+    }
+    const now = new Date().toISOString();
+    await persist({
+      ...store,
+      ashiSettings: {
+        ...store.ashiSettings,
+        rulesPrompt: prompt,
+        categoriesSource: prompt,
+        rolloverPrompt: prompt,
+        rolloverPromptUpdatedAt: now,
+      },
+      updatedAt: now,
+    });
+    setRulesOpen(false);
+    setStatus('Rules saved. Click AI organize to re-tag all tasks.');
   }
 
   async function removeCategory(categoryId: string) {
@@ -506,46 +565,6 @@ export function AshiPage() {
       updatedAt: now,
     });
     if (activeTag === category.name) setActiveTag(nextName);
-  }
-
-  async function generateCategories() {
-    const text = categoriesTextRef.current?.value.trim() ?? '';
-    if (!text || categoriesGenerating) return;
-    setCategoriesGenerating(true);
-    setStatus('');
-    try {
-      const response = await fetch('/api/ashi/categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const data = (await response.json()) as { categories?: GeneratedCategory[]; error?: string };
-      if (!response.ok || !data.categories?.length) throw new Error(data.error || 'No tags generated.');
-      const now = new Date().toISOString();
-      await persist({
-        ...store,
-        todos: store.todos.map((todo) => ({ ...todo, ashiCategoryId: undefined, ashiTags: undefined, ashiTaskJson: undefined, updatedAt: now })),
-        ashiSettings: { ...store.ashiSettings, categories: data.categories, categoriesSource: text },
-        updatedAt: now,
-      });
-      setActiveTag('');
-      setStatus(`Generated ${data.categories.length} tags. Run AI organize to tag tasks.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Tag generation failed.');
-    } finally {
-      setCategoriesGenerating(false);
-    }
-  }
-
-  async function saveRolloverPrompt() {
-    const now = new Date().toISOString();
-    const prompt = rolloverPromptRef.current?.value.trim() || store.ashiSettings.rolloverPrompt;
-    await persist({
-      ...store,
-      ashiSettings: { ...store.ashiSettings, rolloverPrompt: prompt, rolloverPromptUpdatedAt: now },
-      updatedAt: now,
-    });
-    setStatus('Rollover prompt saved.');
   }
 
   async function askAshi() {
@@ -606,25 +625,9 @@ export function AshiPage() {
             onChange={(event) => setTitle(event.target.value)}
           />
           <label className={`ashi-image-pick${imagePreview ? ' has-image' : ''}`}>
-            {imagePreview ? (
-              <span className="ashi-image-thumb">
-                <img src={imagePreview} alt="preview" />
-                <span className="ashi-image-name">{imageFile?.name}</span>
-              </span>
-            ) : (
-              <>
-                <span className="ashi-image-icon" aria-hidden>+</span>
-                <span className="ashi-image-title">Attach image</span>
-                <span className="ashi-image-hint">PNG, JPG up to a few MB</span>
-              </>
-            )}
+            <span className="ashi-image-title">Photo</span>
             <input type="file" accept="image/*" onChange={(event) => setImageFile(event.target.files?.[0] ?? null)} />
           </label>
-          {imagePreview ? (
-            <button type="button" className="ashi-image-clear" onClick={() => setImageFile(null)}>
-              Remove image
-            </button>
-          ) : null}
           <button type="button" className="btn-3d ashi-add-btn" onClick={() => void addTask()}>
             add + auto tag
           </button>
@@ -643,10 +646,40 @@ export function AshiPage() {
             <span className="section-eyebrow">Ashi tags</span>
             <h2>All-time tasks</h2>
           </div>
-          <button type="button" className="btn-ghost" onClick={() => void organizeAllTasks()} disabled={classifying || !tasks.length}>
-            {classifying ? 'Tagging...' : 'AI organize'}
-          </button>
+          <div className="ashi-panel-actions">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setRulesDraft(rulesPrompt);
+                setRulesOpen((open) => !open);
+              }}
+            >
+              Rules
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => void organizeAllTasks()} disabled={classifying || !tasks.length}>
+              {classifying ? 'Tagging...' : 'AI organize'}
+            </button>
+          </div>
         </div>
+
+        {rulesOpen ? (
+          <div className="ashi-rules-editor">
+            <textarea
+              value={rulesDraft}
+              onChange={(event) => setRulesDraft(event.target.value)}
+              placeholder="Write category rules and next-day rules in one prompt."
+            />
+            <div className="ashi-rules-actions">
+              <button type="button" className="btn-ghost" onClick={() => setRulesOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-3d" onClick={() => void saveRules()}>
+                Save rules
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Tag filter tabs header */}
         <div className="ashi-tag-filter">
@@ -704,28 +737,6 @@ export function AshiPage() {
               </button>
             </div>
           ) : null}
-        </div>
-
-        <div className="ashi-category-builder">
-          <textarea
-            ref={categoriesTextRef}
-            defaultValue={store.ashiSettings.categoriesSource ?? categories.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n')}
-            placeholder="Mention all tags and rules, one per line. Example: Jub CNC jaayenge: groceries or CNC market tasks."
-          />
-          <button type="button" className="btn-3d" onClick={() => void generateCategories()} disabled={categoriesGenerating}>
-            {categoriesGenerating ? 'Generating...' : 'Generate tags'}
-          </button>
-        </div>
-
-        <div className="ashi-rollover-box">
-          <div className="ashi-task-section-head">
-            <h3>Next-day prompt</h3>
-            <span>AI</span>
-          </div>
-          <textarea ref={rolloverPromptRef} defaultValue={store.ashiSettings.rolloverPrompt} />
-          <button type="button" className="btn-ghost" onClick={() => void saveRolloverPrompt()}>
-            Save prompt
-          </button>
         </div>
 
         {/* Filtered task list */}

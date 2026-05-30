@@ -1827,7 +1827,7 @@ label {
 
 .ashi-create {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.9rem;
   justify-items: center;
   align-items: center;
@@ -2012,19 +2012,16 @@ label {
 
 .ashi-image-pick {
   display: grid;
-  gap: 0.12rem;
   justify-items: center;
   align-content: center;
-  width: 100%;
-  max-width: 96px;
-  height: 54px;
-  min-height: 54px;
-  padding: 0.38rem 0.45rem;
+  width: 72px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0.35rem 0.55rem;
   text-align: center;
   color: var(--accent-dark);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 232, 226, 0.7));
-  border: 2px dashed var(--accent-soft);
+  background: var(--surface-strong);
+  border: 2px solid var(--accent);
   border-radius: 12px;
   align-self: center;
   cursor: pointer;
@@ -2040,8 +2037,7 @@ label {
 
 .ashi-image-pick.has-image {
   border-style: solid;
-  background: var(--surface-strong);
-  padding: 0.25rem;
+  background: #fff2ec;
 }
 
 .ashi-image-pick input {
@@ -2052,70 +2048,13 @@ label {
   pointer-events: none;
 }
 
-.ashi-image-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(180deg, var(--accent-soft), var(--accent));
-  color: #fff;
-  font-size: 0.95rem;
-  font-weight: 800;
-  box-shadow: 0 3px 0 var(--accent-dark);
-}
-
 .ashi-image-title {
   font-weight: 800;
-  font-size: 0.68rem;
-}
-
-.ashi-image-hint {
-  font-size: 0.55rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.ashi-image-thumb {
-  display: grid;
-  gap: 0.35rem;
-  justify-items: center;
-  width: 100%;
-}
-
-.ashi-image-thumb img {
-  width: 100%;
-  max-height: 42px;
-  object-fit: cover;
-  border-radius: 8px;
-}
-
-.ashi-image-name {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--muted);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ashi-image-clear {
-  grid-column: 1 / -1;
-  justify-self: center;
-  background: transparent;
-  border: none;
-  color: var(--accent-dark);
-  font-weight: 700;
   font-size: 0.78rem;
-  text-decoration: underline;
-  cursor: pointer;
-  padding: 0;
 }
 
 .ashi-add-btn {
-  grid-column: 1 / -1;
-  min-width: 150px;
+  min-width: 132px;
   justify-self: center;
 }
 
@@ -2481,14 +2420,21 @@ label {
   box-shadow: 0 2px 0 rgba(88, 151, 177, 0.3);
 }
 
-.ashi-category-builder,
+.ashi-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ashi-rules-editor,
 .ashi-chat-box {
   display: grid;
   gap: 0.55rem;
 }
 
-.ashi-category-builder textarea,
-.ashi-rollover-box textarea,
+.ashi-rules-editor textarea,
 .ashi-chat-box input {
   min-height: 44px;
   padding: 0.55rem 0.85rem;
@@ -2501,25 +2447,17 @@ label {
   font-family: inherit;
 }
 
-.ashi-category-builder textarea {
-  min-height: 118px;
+.ashi-rules-editor textarea {
+  min-height: 160px;
   resize: vertical;
   line-height: 1.35;
 }
 
-.ashi-rollover-box {
-  display: grid;
+.ashi-rules-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: 0.55rem;
-  padding: 0.65rem;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.48);
-  border: 2px solid rgba(239, 81, 64, 0.12);
-}
-
-.ashi-rollover-box textarea {
-  min-height: 96px;
-  resize: vertical;
-  line-height: 1.35;
+  flex-wrap: wrap;
 }
 
 .ashi-category-groups {
@@ -2653,7 +2591,7 @@ label {
   border: 2px solid rgba(255, 255, 255, 0.8);
 }
 
-.ashi-category-builder textarea::placeholder,
+.ashi-rules-editor textarea::placeholder,
 .ashi-chat-box input::placeholder {
   color: var(--muted);
 }
@@ -3206,7 +3144,8 @@ label {
   }
 
   .ashi-create {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 0.45rem;
   }
 
   .ashi-task-input,

@@ -71,6 +71,7 @@ export interface AshiTaskJson {
 
 export interface AshiSettings {
   categories: AshiCategory[];
+  rulesPrompt?: string;
   categoriesSource?: string;
   rolloverPrompt: string;
   rolloverPromptUpdatedAt?: string;
@@ -119,6 +120,7 @@ export const DEFAULT_STORE: TodoStore = {
   completionHistory: [],
   ashiSettings: {
     categories: DEFAULT_ASHI_CATEGORIES,
+    rulesPrompt: DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n\n'),
     rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
   },
   updatedAt: new Date(0).toISOString(),
@@ -252,8 +254,14 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
   const categories = rawCategories
     ? rawCategories.map(normalizeAshiCategory).filter((item): item is AshiCategory => Boolean(item))
     : DEFAULT_STORE.ashiSettings.categories;
+  const rulesPrompt =
+    cleanText(data.rulesPrompt) ||
+    cleanText(data.categoriesSource) ||
+    cleanText(data.rolloverPrompt) ||
+    DEFAULT_STORE.ashiSettings.rulesPrompt;
   return {
     categories,
+    rulesPrompt,
     categoriesSource: cleanText(data.categoriesSource) || undefined,
     rolloverPrompt: cleanText(data.rolloverPrompt) || DEFAULT_ASHI_ROLLOVER_PROMPT,
     rolloverPromptUpdatedAt: cleanText(data.rolloverPromptUpdatedAt) || undefined,
