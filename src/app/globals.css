@@ -2260,6 +2260,20 @@ label {
   transform: translateY(-1px);
 }
 
+.ashi-task-btn.is-teach {
+  background: var(--surface-strong);
+  border-color: #68a7ff;
+  color: #1b66b1;
+  font-size: 0.72rem;
+  box-shadow: 0 3px 0 rgba(65, 123, 190, 0.45);
+}
+
+.ashi-task-btn.is-teach:hover {
+  background: linear-gradient(180deg, #eaf4ff, #b9ddff);
+  border-color: #3c8be0;
+  color: #174f89;
+}
+
 .ashi-task-btn.is-complete {
   background: linear-gradient(180deg, #7be3a4, #3fc97a);
   color: #fff;

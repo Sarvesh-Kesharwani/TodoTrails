@@ -56,6 +56,34 @@ function sameDay(a: Date, b: Date) {
   return startOfLocalDay(a).getTime() === startOfLocalDay(b).getTime();
 }
 
+function normalizeTagName(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function appendTeachingExampleToRules(source: string, categoryName: string, taskTitle: string) {
+  const cleanCategory = categoryName.trim();
+  const cleanTitle = taskTitle.trim();
+  const exampleLine = `- Example task: ${cleanTitle}`;
+  if (!cleanCategory || !cleanTitle) return source;
+  if (source.toLowerCase().includes(cleanTitle.toLowerCase())) return source;
+
+  const lines = source.trimEnd().split(/\r?\n/);
+  const categoryKey = normalizeTagName(cleanCategory);
+  const categoryIndex = lines.findIndex((line) => {
+    const cleanLine = normalizeTagName(line.replace(/[:\-].*$/, ''));
+    return cleanLine === categoryKey;
+  });
+
+  if (categoryIndex >= 0) {
+    const nextLines = [...lines];
+    nextLines.splice(categoryIndex + 1, 0, exampleLine);
+    return nextLines.join('\n');
+  }
+
+  const prefix = source.trim() ? `${source.trimEnd()}\n\n` : '';
+  return `${prefix}${cleanCategory}:\n${exampleLine}`;
+}
+
 /** Get all unique tag names across all tasks (from ashiTags or ashiTaskJson.taskTags) */
 function getAllTags(tasks: TodoItem[]): string[] {
   const seen = new Set<string>();
@@ -92,12 +120,13 @@ function attachmentPreview(attachments: TodoAttachment[] | undefined) {
 
 type TaskRowProps = {
   todo: TodoItem;
+  onTeach: (todo: TodoItem) => void;
   onComplete: (todo: TodoItem) => void;
   onEdit: (todo: TodoItem) => void;
   onDelete: (todo: TodoItem) => void;
 };
 
-function TaskRow({ todo, onComplete, onEdit, onDelete }: TaskRowProps) {
+function TaskRow({ todo, onTeach, onComplete, onEdit, onDelete }: TaskRowProps) {
   const due = taskDueDate(todo);
   const displayName = todo.ashiTaskJson?.taskName || todo.title;
   const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
@@ -123,6 +152,9 @@ function TaskRow({ todo, onComplete, onEdit, onDelete }: TaskRowProps) {
         {attachmentPreview(todo.attachments)}
       </div>
       <div className="ashi-task-actions">
+        <button type="button" className="ashi-task-btn is-teach" onClick={() => onTeach(todo)} aria-label="Teach correct tag" title="Teach correct tag">
+          AI
+        </button>
         <button type="button" className="ashi-task-btn is-complete" onClick={() => onComplete(todo)} aria-label="Mark complete" title="Mark complete">
           {'\u2713'}
         </button>
@@ -511,6 +543,52 @@ export function AshiPage() {
     setStatus('Rules saved. Click AI organize to re-tag all tasks.');
   }
 
+  async function teachTaskCategory(todo: TodoItem) {
+    const existingTag = todo.ashiTags?.[0] ?? todo.ashiTaskJson?.taskCategory ?? '';
+    const categoryNames = categories.map((category) => category.name).join(', ');
+    const targetTag = window.prompt(
+      `Correct tag for "${todo.title}"${categoryNames ? `\nOptions: ${categoryNames}` : ''}`,
+      existingTag || categories[0]?.name || '',
+    )?.trim();
+    if (!targetTag) return;
+
+    const now = new Date().toISOString();
+    const nextRules = appendTeachingExampleToRules(rulesPrompt, targetTag, todo.title);
+    const matchedCategory = categories.find((category) => normalizeTagName(category.name) === normalizeTagName(targetTag));
+    const nextTodos = store.todos.map((item) => {
+      if (item.id !== todo.id || !matchedCategory) return item;
+      return {
+        ...item,
+        ashiCategoryId: matchedCategory.id,
+        ashiTags: [matchedCategory.name],
+        ashiTaskJson: {
+          taskCategory: matchedCategory.name,
+          taskTags: [matchedCategory.name],
+          taskName: item.ashiTaskJson?.taskName || item.title,
+          moveToNextDay: item.ashiTaskJson?.moveToNextDay ?? true,
+        },
+        updatedAt: now,
+      };
+    });
+
+    await persist({
+      ...store,
+      todos: nextTodos,
+      ashiSettings: {
+        ...store.ashiSettings,
+        rulesPrompt: nextRules,
+        categoriesSource: nextRules,
+        rolloverPrompt: nextRules,
+        rolloverPromptUpdatedAt: now,
+      },
+      updatedAt: now,
+    });
+    setRulesDraft(nextRules);
+    setRulesOpen(true);
+    setActiveTag('');
+    setStatus(`Teaching example saved under "${targetTag}". Click AI organize to re-tag all tasks.`);
+  }
+
   async function removeCategory(categoryId: string) {
     const category = categories.find((item) => item.id === categoryId);
     if (!category || !window.confirm(`Remove tag "${category.name}"? Tasks stay saved but lose this tag.`)) return;
@@ -593,6 +671,9 @@ export function AshiPage() {
       <TaskRow
         key={todo.id}
         todo={todo}
+        onTeach={(item) => {
+          void teachTaskCategory(item);
+        }}
         onComplete={(item) => {
           if (!window.confirm(`Mark "${item.title}" as complete?`)) return;
           void updateTodo(item.id, (next) => ({ ...next, done: true, bucket: 'completed' }));
