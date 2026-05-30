@@ -2360,6 +2360,12 @@ label {
   gap: 0.45rem;
 }
 
+.ashi-tag-control {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+
 .ashi-tag-layer {
   display: grid;
   gap: 0.35rem;
@@ -2427,6 +2433,24 @@ label {
 
 .ashi-tag-pill.is-active .ashi-tag-pill-count {
   background: rgba(255, 255, 255, 0.25);
+}
+
+.ashi-tag-layer-move {
+  border: 2px solid rgba(104, 167, 255, 0.35);
+  background: #f5fbff;
+  color: #1b66b1;
+  border-radius: 999px;
+  padding: 0.22rem 0.5rem;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(65, 123, 190, 0.22);
+}
+
+.ashi-tag-layer-move:hover {
+  background: #eaf4ff;
+  border-color: #68a7ff;
 }
 
 .ashi-active-tag-actions {

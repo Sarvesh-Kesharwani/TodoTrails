@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AshiCategory, TodoAttachment, TodoItem } from '@/types/todo';
+import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem } from '@/types/todo';
 import { endOfDay, parseDate, startOfLocalDay } from '@/lib/planner-date';
 import { uploadTodoAttachment } from '@/lib/attachments-client';
 import { useTodoStore } from './useTodoStore';
@@ -71,6 +71,34 @@ function inferTagLayer(tag: string, category?: AshiCategory): 'generic' | 'speci
     return 'generic';
   }
   return 'specific';
+}
+
+function cleanLayerRuleText(value: string) {
+  return value.replace(/\[layer:\s*(generic|specific)\]\s*/gi, '').trim();
+}
+
+function updateRulesTagLayer(source: string, category: AshiCategory, layer: AshiCategoryLayer) {
+  const marker = `[layer: ${layer}]`;
+  const lines = source.trimEnd().split(/\r?\n/);
+  const categoryKey = normalizeTagName(category.name);
+  const categoryIndex = lines.findIndex((line) => normalizeTagName(line.replace(/[:\-].*$/, '')) === categoryKey);
+
+  if (categoryIndex >= 0) {
+    const line = lines[categoryIndex];
+    const colonIndex = line.indexOf(':');
+    if (colonIndex >= 0) {
+      const name = line.slice(0, colonIndex).trim() || category.name;
+      const description = cleanLayerRuleText(line.slice(colonIndex + 1));
+      lines[categoryIndex] = `${name}: ${marker}${description ? ` ${description}` : ''}`;
+    } else {
+      lines[categoryIndex] = `${category.name}: ${marker}`;
+    }
+    return lines.join('\n');
+  }
+
+  const description = cleanLayerRuleText(category.description ?? '');
+  const prefix = source.trim() ? `${source.trimEnd()}\n\n` : '';
+  return `${prefix}${category.name}: ${marker}${description ? ` ${description}` : ''}`;
 }
 
 function appendTeachingIntentToRules(source: string, intent: TeachIntent, taskTitle: string, rawInstruction: string) {
@@ -207,7 +235,7 @@ function TaskRow({
           <textarea
             value={teachDraft}
             onChange={(event) => onTeachDraftChange(event.target.value)}
-            placeholder="Example: put this in jbp and madhav nagar gpc. Move to next day yes."
+            placeholder={`Put this task in madhav nagar gpc and jbp.\nThis should move to next day if unfinished.`}
           />
           <div className="ashi-rules-actions">
             <button type="button" className="btn-ghost" onClick={onCancelTeach} disabled={teachSubmitting}>
@@ -642,7 +670,11 @@ export function AshiPage() {
   function startTeachTask(todo: TodoItem) {
     const currentTags = todo.ashiTags?.join(', ') ?? todo.ashiTaskJson?.taskCategory ?? '';
     setTeachingTodo(todo);
-    setTeachDraft(currentTags ? `Put this task in: ${currentTags}` : '');
+    setTeachDraft(
+      currentTags
+        ? `Put this task in ${currentTags}.\nThis should move to next day if unfinished.`
+        : 'Put this task in madhav nagar gpc and jbp.\nThis should move to next day if unfinished.',
+    );
     setStatus('');
   }
 
@@ -752,6 +784,30 @@ export function AshiPage() {
     if (activeTag === category.name) setActiveTag(nextName);
   }
 
+  async function moveTagLayer(tag: string, layer: AshiCategoryLayer) {
+    const category = categories.find((item) => normalizeTagName(item.name) === normalizeTagName(tag));
+    if (!category) {
+      setStatus(`Cannot move "${tag}" because category metadata is missing. Run AI organize first.`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextRules = updateRulesTagLayer(rulesPrompt, category, layer);
+    await persist({
+      ...store,
+      ashiSettings: {
+        ...store.ashiSettings,
+        categories: categories.map((item) => (item.id === category.id ? { ...item, layer } : item)),
+        rulesPrompt: nextRules,
+        categoriesSource: nextRules,
+        rolloverPrompt: nextRules,
+        rolloverPromptUpdatedAt: now,
+      },
+      updatedAt: now,
+    });
+    setRulesDraft(nextRules);
+    setStatus(`Moved "${category.name}" to ${layer} layer.`);
+  }
+
   async function askAshi() {
     const cleanQuestion = question.trim();
     if (!cleanQuestion || asking) return;
@@ -773,16 +829,26 @@ export function AshiPage() {
     }
   }
 
-  function renderTagPill(tag: string) {
+  function renderTagPill(tag: string, layer: AshiCategoryLayer) {
+    const nextLayer: AshiCategoryLayer = layer === 'generic' ? 'specific' : 'generic';
     return (
-      <button
-        key={tag}
-        type="button"
-        className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
-        onClick={() => setActiveTag(tag)}
-      >
-        {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
-      </button>
+      <span key={tag} className="ashi-tag-control">
+        <button
+          type="button"
+          className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
+          onClick={() => setActiveTag(tag)}
+        >
+          {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
+        </button>
+        <button
+          type="button"
+          className="ashi-tag-layer-move"
+          onClick={() => void moveTagLayer(tag, nextLayer)}
+          title={`Move ${tag} to ${nextLayer}`}
+        >
+          To {nextLayer}
+        </button>
+      </span>
     );
   }
 
@@ -916,11 +982,11 @@ export function AshiPage() {
           </div>
           <div className="ashi-tag-layer">
             <span className="ashi-tag-layer-label">Generic</span>
-            <div className="ashi-tag-filter-bar">{tagsByLayer.generic.map(renderTagPill)}</div>
+            <div className="ashi-tag-filter-bar">{tagsByLayer.generic.map((tag) => renderTagPill(tag, 'generic'))}</div>
           </div>
           <div className="ashi-tag-layer">
             <span className="ashi-tag-layer-label">Specific spots / people</span>
-            <div className="ashi-tag-filter-bar">{tagsByLayer.specific.map(renderTagPill)}</div>
+            <div className="ashi-tag-filter-bar">{tagsByLayer.specific.map((tag) => renderTagPill(tag, 'specific'))}</div>
           </div>
           {/* Tag management: rename/remove */}
           {activeTag && activeTag !== '__untagged__' && categories.find((c) => c.name === activeTag) ? (

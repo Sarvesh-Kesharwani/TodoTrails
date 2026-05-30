@@ -147,6 +147,16 @@ function inferCategoryLayer(name: string, description = ''): 'generic' | 'specif
   return 'specific';
 }
 
+function readLayerMarker(value: string): 'generic' | 'specific' | undefined {
+  const marker = /\[layer:\s*(generic|specific)\]/i.exec(value);
+  const layer = marker?.[1]?.toLowerCase();
+  return layer === 'generic' || layer === 'specific' ? layer : undefined;
+}
+
+function cleanLayerMarker(value: string) {
+  return value.replace(/\[layer:\s*(generic|specific)\]\s*/gi, '').trim();
+}
+
 function matchCategoryId(taskCategory: string, categories: AshiCategory[]) {
   const clean = taskCategory.trim().toLowerCase();
   const found =
@@ -252,7 +262,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Also classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
+              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. If a category line has explicit marker like [layer: generic] or [layer: specific], obey that marker exactly. Otherwise classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
             userText: cleanSource,
           }),
         },
@@ -265,7 +275,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
     return (Array.isArray(json.categories) ? json.categories : [])
       .map((category) => ({
         name: cleanString(category.name),
-        description: cleanString(category.description),
+        description: cleanLayerMarker(cleanString(category.description)),
         layer: cleanCategoryLayer(category.layer),
       }))
       .filter((category) => {
@@ -289,11 +299,13 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
       .filter(Boolean)
       .map((line) => {
         const [name, ...rest] = line.split(/[:\-–—]/);
+        const description = rest.join('-').trim() || line;
+        const layer = readLayerMarker(line) ?? inferCategoryLayer(name, description);
         return {
           id: slugId(name),
           name: name.trim(),
-          description: rest.join('-').trim() || line,
-          layer: inferCategoryLayer(name, rest.join('-')),
+          description: cleanLayerMarker(description),
+          layer,
           createdAt: now,
         };
       });
