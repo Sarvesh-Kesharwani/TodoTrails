@@ -1816,7 +1816,7 @@ label {
 
 .ashi-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 1fr);
   gap: 1rem;
 }
 
@@ -1850,6 +1850,12 @@ label {
 .ashi-task-input::placeholder {
   color: var(--muted);
   font-weight: 600;
+}
+
+.ashi-task-notes {
+  min-height: 92px;
+  resize: vertical;
+  align-self: stretch;
 }
 
 .ashi-task-input:focus,
@@ -2151,6 +2157,104 @@ label {
   box-shadow: 0 4px 0 rgba(223, 177, 166, 0.95);
 }
 
+.ashi-task-section {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+  border: 2px solid rgba(239, 81, 64, 0.12);
+}
+
+.ashi-task-section-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.ashi-task-section-head h3 {
+  color: var(--accent-dark);
+  font-size: 0.92rem;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ashi-task-section-head span,
+.ashi-task-details summary strong {
+  min-width: 30px;
+  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--accent-dark);
+  font-size: 0.8rem;
+  box-shadow: 0 3px 0 rgba(223, 177, 166, 0.72);
+}
+
+.ashi-task-stack {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ashi-task-details {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ashi-task-details summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.7rem 0.85rem;
+  color: var(--accent-dark);
+  cursor: pointer;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  list-style: none;
+}
+
+.ashi-task-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.ashi-task-details summary::before {
+  content: '+';
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent-soft), var(--accent));
+  color: #fff;
+  box-shadow: 0 3px 0 var(--accent-dark);
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.ashi-task-details summary span {
+  grid-column: 2;
+}
+
+.ashi-task-details summary strong {
+  grid-column: 3;
+  justify-self: end;
+}
+
+.ashi-task-details[open] summary::before {
+  content: '-';
+}
+
+.ashi-task-details[open] .ashi-task-stack,
+.ashi-task-details[open] .ashi-empty {
+  margin: 0 0.65rem 0.65rem;
+}
+
 .ashi-task-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2180,6 +2284,22 @@ label {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 700;
+}
+
+.ashi-category-chip {
+  justify-self: start;
+  width: fit-content;
+  padding: 0.22rem 0.48rem;
+  border-radius: 999px;
+  background: #eaf7ff;
+  color: #24546a !important;
+  font-size: 0.72rem !important;
+  box-shadow: 0 2px 0 rgba(88, 151, 177, 0.35);
+}
+
+.ashi-category-chip.is-warn {
+  background: #fff4cf;
+  color: #73560a !important;
 }
 
 .ashi-task-actions {
@@ -2252,6 +2372,85 @@ label {
   display: grid;
   grid-template-rows: auto minmax(240px, 1fr) auto;
   gap: 0.8rem;
+}
+
+.ashi-categories-panel {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(280px, 1fr) auto auto;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.ashi-category-add,
+.ashi-chat-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+}
+
+.ashi-category-add input,
+.ashi-rollover-box textarea,
+.ashi-chat-box input {
+  min-height: 44px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 14px;
+  border: 2px solid var(--accent);
+  background: var(--surface-strong);
+  color: var(--accent-dark);
+  font-weight: 600;
+  box-shadow: 0 3px 0 rgba(223, 177, 166, 0.7);
+  font-family: inherit;
+}
+
+.ashi-rollover-box {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+  border: 2px solid rgba(239, 81, 64, 0.12);
+}
+
+.ashi-rollover-box textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.ashi-category-groups {
+  display: grid;
+  gap: 0.65rem;
+  align-content: start;
+  max-height: 780px;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.ashi-category-details[open] .ashi-task-stack,
+.ashi-category-details[open] .ashi-empty,
+.ashi-category-details[open] .ashi-category-remove {
+  margin: 0 0.65rem 0.65rem;
+}
+
+.ashi-category-remove {
+  justify-self: start;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ashi-chat-toggle {
+  justify-self: stretch;
+}
+
+.ashi-chat-drawer {
+  display: grid;
+  gap: 0.7rem;
 }
 
 .ashi-chat-log {
@@ -2330,23 +2529,7 @@ label {
   border: 2px solid rgba(255, 255, 255, 0.8);
 }
 
-.ashi-chat-box {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.55rem;
-}
-
-.ashi-chat-box input {
-  min-height: 44px;
-  padding: 0.55rem 0.85rem;
-  border-radius: 14px;
-  border: 2px solid var(--accent);
-  background: var(--surface-strong);
-  color: var(--accent-dark);
-  font-weight: 600;
-  box-shadow: 0 3px 0 rgba(223, 177, 166, 0.7);
-}
-
+.ashi-category-add input::placeholder,
 .ashi-chat-box input::placeholder {
   color: var(--muted);
 }

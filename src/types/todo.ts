@@ -16,6 +16,9 @@ export interface TodoItem {
   scheduledAt?: string;
   done: boolean;
   repetitive?: boolean;
+  ashiCategoryId?: string;
+  rolloverStatus?: 'undone' | 'moved-next-day';
+  rolloverDecidedAt?: string;
   attachments?: TodoAttachment[];
   dimensionValues: Record<string, string>;
   createdAt: string;
@@ -50,11 +53,25 @@ export interface SortOption {
 
 export type SortMap = Record<TimeBucket, SortOption>;
 
+export interface AshiCategory {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface AshiSettings {
+  categories: AshiCategory[];
+  rolloverPrompt: string;
+  rolloverPromptUpdatedAt?: string;
+  lastRolloverDate?: string;
+}
+
 export interface TodoStore {
   todos: TodoItem[];
   dimensions: Dimension[];
   bucketSort: SortMap;
   completionHistory: CompletionHistoryEntry[];
+  ashiSettings: AshiSettings;
   updatedAt: string;
 }
 
@@ -68,6 +85,18 @@ export const DEFAULT_SORT: SortMap = {
   completed: { field: 'createdAt' },
 };
 
+export const DEFAULT_ASHI_ROLLOVER_PROMPT = `Decide what to do with each unfinished task from yesterday or older.
+Use "move_next_day" when the task is still actionable today and should remain visible in today's list.
+Use "undone" when it should stay as an overdue unfinished task for review instead of being carried forward automatically.`;
+
+const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
+  { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-katni-city-jaayenge', name: 'Jub Katni city jaayenge', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-jbp-jaayenge', name: 'Jub JBP jaayenge', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', createdAt: new Date(0).toISOString() },
+];
+
 export const DEFAULT_STORE: TodoStore = {
   todos: [],
   dimensions: [
@@ -77,6 +106,10 @@ export const DEFAULT_STORE: TodoStore = {
   ],
   bucketSort: DEFAULT_SORT,
   completionHistory: [],
+  ashiSettings: {
+    categories: DEFAULT_ASHI_CATEGORIES,
+    rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
+  },
   updatedAt: new Date(0).toISOString(),
 };
 
@@ -154,10 +187,41 @@ function normalizeTodo(raw: unknown): TodoItem | null {
     scheduledAt: cleanText(data.scheduledAt) || undefined,
     done: safeBucket === 'completed' || Boolean(data.done),
     repetitive: Boolean(data.repetitive),
+    ashiCategoryId: cleanText(data.ashiCategoryId) || undefined,
+    rolloverStatus:
+      data.rolloverStatus === 'undone' || data.rolloverStatus === 'moved-next-day' ? data.rolloverStatus : undefined,
+    rolloverDecidedAt: cleanText(data.rolloverDecidedAt) || undefined,
     attachments: attachments.length ? attachments : undefined,
     dimensionValues,
     createdAt: cleanText(data.createdAt) || now,
     updatedAt: cleanText(data.updatedAt) || now,
+  };
+}
+
+function normalizeAshiCategory(raw: unknown): AshiCategory | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Partial<AshiCategory>;
+  const id = cleanText(data.id);
+  const name = cleanText(data.name);
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    createdAt: cleanText(data.createdAt) || new Date(0).toISOString(),
+  };
+}
+
+function normalizeAshiSettings(raw: unknown): AshiSettings {
+  const data = raw && typeof raw === 'object' ? (raw as Partial<AshiSettings>) : {};
+  const rawCategories = Array.isArray(data.categories) ? data.categories : null;
+  const categories = rawCategories
+    ? rawCategories.map(normalizeAshiCategory).filter((item): item is AshiCategory => Boolean(item))
+    : DEFAULT_STORE.ashiSettings.categories;
+  return {
+    categories,
+    rolloverPrompt: cleanText(data.rolloverPrompt) || DEFAULT_ASHI_ROLLOVER_PROMPT,
+    rolloverPromptUpdatedAt: cleanText(data.rolloverPromptUpdatedAt) || undefined,
+    lastRolloverDate: cleanText(data.lastRolloverDate) || undefined,
   };
 }
 
@@ -200,6 +264,8 @@ export function normalizeStore(input: unknown): TodoStore {
   const dimensions = Array.isArray(source.dimensions)
     ? source.dimensions.map(normalizeDimension).filter((item): item is Dimension => Boolean(item))
     : DEFAULT_STORE.dimensions;
+  const ashiSettings = normalizeAshiSettings(source.ashiSettings);
+  const categoryIds = new Set(ashiSettings.categories.map((category) => category.id));
 
   const dimensionIds = new Set(dimensions.map((d) => d.id));
   const todos = Array.isArray(source.todos)
@@ -208,6 +274,7 @@ export function normalizeStore(input: unknown): TodoStore {
         .filter((item): item is TodoItem => Boolean(item))
         .map((todo) => ({
           ...todo,
+          ashiCategoryId: todo.ashiCategoryId && categoryIds.has(todo.ashiCategoryId) ? todo.ashiCategoryId : undefined,
           dimensionValues: Object.fromEntries(Object.entries(todo.dimensionValues).filter(([k]) => dimensionIds.has(k))),
         }))
     : [];
@@ -241,6 +308,7 @@ export function normalizeStore(input: unknown): TodoStore {
     dimensions: dimensions.length ? dimensions : DEFAULT_STORE.dimensions,
     bucketSort: safeSort,
     completionHistory,
+    ashiSettings,
     updatedAt: cleanText(source.updatedAt) || new Date().toISOString(),
   };
 }
