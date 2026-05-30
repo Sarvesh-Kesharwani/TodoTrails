@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem } from '@/types/todo';
 import { endOfDay, parseDate, startOfLocalDay } from '@/lib/planner-date';
 import { uploadTodoAttachment } from '@/lib/attachments-client';
@@ -364,6 +364,7 @@ export function AshiPage() {
   const [teachDraft, setTeachDraft] = useState('');
   const [teachSubmitting, setTeachSubmitting] = useState(false);
   const [activeTag, setActiveTag] = useState('');
+  const [draggingTag, setDraggingTag] = useState('');
   const rolloverRunningRef = useRef(false);
 
   const tasks = useMemo(() => sortedTodos(store.todos), [store.todos]);
@@ -790,6 +791,10 @@ export function AshiPage() {
       setStatus(`Cannot move "${tag}" because category metadata is missing. Run AI organize first.`);
       return;
     }
+    if (inferTagLayer(category.name, category) === layer) {
+      setDraggingTag('');
+      return;
+    }
     const now = new Date().toISOString();
     const nextRules = updateRulesTagLayer(rulesPrompt, category, layer);
     await persist({
@@ -805,7 +810,20 @@ export function AshiPage() {
       updatedAt: now,
     });
     setRulesDraft(nextRules);
+    setDraggingTag('');
     setStatus(`Moved "${category.name}" to ${layer} layer.`);
+  }
+
+  function allowTagDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }
+
+  function dropTagLayer(event: DragEvent<HTMLDivElement>, layer: AshiCategoryLayer) {
+    event.preventDefault();
+    const tag = event.dataTransfer.getData('text/plain') || draggingTag;
+    if (!tag) return;
+    void moveTagLayer(tag, layer);
   }
 
   async function askAshi() {
@@ -832,23 +850,22 @@ export function AshiPage() {
   function renderTagPill(tag: string, layer: AshiCategoryLayer) {
     const nextLayer: AshiCategoryLayer = layer === 'generic' ? 'specific' : 'generic';
     return (
-      <span key={tag} className="ashi-tag-control">
-        <button
-          type="button"
-          className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
-          onClick={() => setActiveTag(tag)}
-        >
-          {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
-        </button>
-        <button
-          type="button"
-          className="ashi-tag-layer-move"
-          onClick={() => void moveTagLayer(tag, nextLayer)}
-          title={`Move ${tag} to ${nextLayer}`}
-        >
-          To {nextLayer}
-        </button>
-      </span>
+      <button
+        key={tag}
+        type="button"
+        draggable
+        className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}${draggingTag === tag ? ' is-dragging' : ''}`}
+        onClick={() => setActiveTag(tag)}
+        onDragStart={(event) => {
+          event.dataTransfer.setData('text/plain', tag);
+          event.dataTransfer.effectAllowed = 'move';
+          setDraggingTag(tag);
+        }}
+        onDragEnd={() => setDraggingTag('')}
+        title={`Drag ${tag} to ${nextLayer}`}
+      >
+        {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
+      </button>
     );
   }
 
@@ -980,11 +997,19 @@ export function AshiPage() {
               </button>
             )}
           </div>
-          <div className="ashi-tag-layer">
+          <div
+            className={`ashi-tag-layer${draggingTag ? ' is-drop-ready' : ''}`}
+            onDragOver={allowTagDrop}
+            onDrop={(event) => dropTagLayer(event, 'generic')}
+          >
             <span className="ashi-tag-layer-label">Generic</span>
             <div className="ashi-tag-filter-bar">{tagsByLayer.generic.map((tag) => renderTagPill(tag, 'generic'))}</div>
           </div>
-          <div className="ashi-tag-layer">
+          <div
+            className={`ashi-tag-layer${draggingTag ? ' is-drop-ready' : ''}`}
+            onDragOver={allowTagDrop}
+            onDrop={(event) => dropTagLayer(event, 'specific')}
+          >
             <span className="ashi-tag-layer-label">Specific spots / people</span>
             <div className="ashi-tag-filter-bar">{tagsByLayer.specific.map((tag) => renderTagPill(tag, 'specific'))}</div>
           </div>

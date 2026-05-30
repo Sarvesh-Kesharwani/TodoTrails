@@ -2360,17 +2360,18 @@ label {
   gap: 0.45rem;
 }
 
-.ashi-tag-control {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 0.25rem;
-}
-
 .ashi-tag-layer {
   display: grid;
   gap: 0.35rem;
   padding-top: 0.25rem;
   border-top: 1px solid rgba(239, 81, 64, 0.1);
+  border-radius: 14px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.ashi-tag-layer.is-drop-ready {
+  background: rgba(104, 167, 255, 0.08);
+  border-color: rgba(104, 167, 255, 0.35);
 }
 
 .ashi-tag-layer-label {
@@ -2392,7 +2393,7 @@ label {
   font: inherit;
   font-size: 0.8rem;
   font-weight: 700;
-  cursor: pointer;
+  cursor: grab;
   transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.1s ease;
   box-shadow: 0 2px 0 rgba(223, 177, 166, 0.55);
   white-space: nowrap;
@@ -2435,22 +2436,13 @@ label {
   background: rgba(255, 255, 255, 0.25);
 }
 
-.ashi-tag-layer-move {
-  border: 2px solid rgba(104, 167, 255, 0.35);
-  background: #f5fbff;
-  color: #1b66b1;
-  border-radius: 999px;
-  padding: 0.22rem 0.5rem;
-  font: inherit;
-  font-size: 0.66rem;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: 0 2px 0 rgba(65, 123, 190, 0.22);
+.ashi-tag-pill:active {
+  cursor: grabbing;
 }
 
-.ashi-tag-layer-move:hover {
-  background: #eaf4ff;
-  border-color: #68a7ff;
+.ashi-tag-pill.is-dragging {
+  opacity: 0.55;
+  transform: scale(0.98);
 }
 
 .ashi-active-tag-actions {
