@@ -20,6 +20,7 @@ type CategoryAssignment = {
 };
 type RolloverDecision = { todoId: string; action: 'undone' | 'move_next_day'; reason?: string };
 type GeneratedCategory = AshiCategory;
+type TeachIntent = { taskTags: string[]; moveToNextDay: boolean | null; note?: string };
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -60,28 +61,34 @@ function normalizeTagName(value: string) {
   return value.trim().toLowerCase();
 }
 
-function appendTeachingExampleToRules(source: string, categoryName: string, taskTitle: string) {
-  const cleanCategory = categoryName.trim();
+function appendTeachingIntentToRules(source: string, intent: TeachIntent, taskTitle: string, rawInstruction: string) {
   const cleanTitle = taskTitle.trim();
-  const exampleLine = `- Example task: ${cleanTitle}`;
-  if (!cleanCategory || !cleanTitle) return source;
-  if (source.toLowerCase().includes(cleanTitle.toLowerCase())) return source;
+  const cleanTags = Array.from(new Set(intent.taskTags.map((tag) => tag.trim()).filter(Boolean)));
+  if (!cleanTitle || !cleanTags.length) return source;
 
-  const lines = source.trimEnd().split(/\r?\n/);
-  const categoryKey = normalizeTagName(cleanCategory);
-  const categoryIndex = lines.findIndex((line) => {
-    const cleanLine = normalizeTagName(line.replace(/[:\-].*$/, ''));
-    return cleanLine === categoryKey;
-  });
+  const nextDayText =
+    intent.moveToNextDay === null ? '' : `; move to next day: ${intent.moveToNextDay ? 'yes' : 'no'}`;
+  const noteText = intent.note ? `; note: ${intent.note}` : rawInstruction ? `; note: ${rawInstruction}` : '';
+  const exampleLine = `- Example task: ${cleanTitle}${nextDayText}${noteText}`;
+  let nextSource = source.trimEnd();
 
-  if (categoryIndex >= 0) {
-    const nextLines = [...lines];
-    nextLines.splice(categoryIndex + 1, 0, exampleLine);
-    return nextLines.join('\n');
+  for (const categoryName of cleanTags) {
+    if (nextSource.toLowerCase().includes(`${categoryName.toLowerCase()}`) && nextSource.toLowerCase().includes(cleanTitle.toLowerCase())) {
+      continue;
+    }
+    const lines = nextSource.split(/\r?\n/);
+    const categoryKey = normalizeTagName(categoryName);
+    const categoryIndex = lines.findIndex((line) => normalizeTagName(line.replace(/[:\-].*$/, '')) === categoryKey);
+
+    if (categoryIndex >= 0) {
+      lines.splice(categoryIndex + 1, 0, exampleLine);
+      nextSource = lines.join('\n');
+    } else {
+      const prefix = nextSource.trim() ? `${nextSource}\n\n` : '';
+      nextSource = `${prefix}${categoryName}:\n${exampleLine}`;
+    }
   }
-
-  const prefix = source.trim() ? `${source.trimEnd()}\n\n` : '';
-  return `${prefix}${cleanCategory}:\n${exampleLine}`;
+  return nextSource;
 }
 
 /** Get all unique tag names across all tasks (from ashiTags or ashiTaskJson.taskTags) */
@@ -120,13 +127,31 @@ function attachmentPreview(attachments: TodoAttachment[] | undefined) {
 
 type TaskRowProps = {
   todo: TodoItem;
+  isTeaching: boolean;
+  teachDraft: string;
+  teachSubmitting: boolean;
   onTeach: (todo: TodoItem) => void;
+  onTeachDraftChange: (value: string) => void;
+  onSubmitTeach: () => void;
+  onCancelTeach: () => void;
   onComplete: (todo: TodoItem) => void;
   onEdit: (todo: TodoItem) => void;
   onDelete: (todo: TodoItem) => void;
 };
 
-function TaskRow({ todo, onTeach, onComplete, onEdit, onDelete }: TaskRowProps) {
+function TaskRow({
+  todo,
+  isTeaching,
+  teachDraft,
+  teachSubmitting,
+  onTeach,
+  onTeachDraftChange,
+  onSubmitTeach,
+  onCancelTeach,
+  onComplete,
+  onEdit,
+  onDelete,
+}: TaskRowProps) {
   const due = taskDueDate(todo);
   const displayName = todo.ashiTaskJson?.taskName || todo.title;
   const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
@@ -165,6 +190,23 @@ function TaskRow({ todo, onTeach, onComplete, onEdit, onDelete }: TaskRowProps) 
           {'\u2715'}
         </button>
       </div>
+      {isTeaching ? (
+        <div className="ashi-task-teach">
+          <textarea
+            value={teachDraft}
+            onChange={(event) => onTeachDraftChange(event.target.value)}
+            placeholder="Example: put this in jbp and madhav nagar gpc. Move to next day yes."
+          />
+          <div className="ashi-rules-actions">
+            <button type="button" className="btn-ghost" onClick={onCancelTeach} disabled={teachSubmitting}>
+              Cancel
+            </button>
+            <button type="button" className="btn-3d" onClick={onSubmitTeach} disabled={teachSubmitting || !teachDraft.trim()}>
+              {teachSubmitting ? 'Learning...' : 'Learn + re-tag'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -278,6 +320,9 @@ export function AshiPage() {
   const [classifying, setClassifying] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesDraft, setRulesDraft] = useState('');
+  const [teachingTodo, setTeachingTodo] = useState<TodoItem | null>(null);
+  const [teachDraft, setTeachDraft] = useState('');
+  const [teachSubmitting, setTeachSubmitting] = useState(false);
   const [activeTag, setActiveTag] = useState('');
   const rolloverRunningRef = useRef(false);
 
@@ -435,6 +480,34 @@ export function AshiPage() {
     });
   }
 
+  function assignmentFromTeach(todo: TodoItem, intent: TeachIntent, sourceCategories: AshiCategory[]): CategoryAssignment | null {
+    const matchedCategories = intent.taskTags
+      .map((tag) => sourceCategories.find((category) => normalizeTagName(category.name) === normalizeTagName(tag)))
+      .filter((category): category is AshiCategory => Boolean(category));
+    const primaryCategory = matchedCategories[0];
+    if (!primaryCategory) return null;
+    return {
+      todoId: todo.id,
+      categoryId: primaryCategory.id,
+      taskCategory: primaryCategory.name,
+      taskTags: matchedCategories.map((category) => category.name),
+      taskName: todo.ashiTaskJson?.taskName || todo.title,
+      moveToNextDay: intent.moveToNextDay ?? todo.ashiTaskJson?.moveToNextDay ?? true,
+      reason: intent.note,
+    };
+  }
+
+  async function parseTeachIntent(todo: TodoItem, instruction: string) {
+    const response = await fetch('/api/ashi/teach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ todo, categories, instruction }),
+    });
+    const data = (await response.json()) as { intent?: TeachIntent; error?: string };
+    if (!response.ok || !data.intent) throw new Error(data.error || 'Teach failed.');
+    return data.intent;
+  }
+
   async function addTask() {
     const cleanTitle = title.trim();
     if (!cleanTitle) return;
@@ -543,50 +616,61 @@ export function AshiPage() {
     setStatus('Rules saved. Click AI organize to re-tag all tasks.');
   }
 
-  async function teachTaskCategory(todo: TodoItem) {
-    const existingTag = todo.ashiTags?.[0] ?? todo.ashiTaskJson?.taskCategory ?? '';
-    const categoryNames = categories.map((category) => category.name).join(', ');
-    const targetTag = window.prompt(
-      `Correct tag for "${todo.title}"${categoryNames ? `\nOptions: ${categoryNames}` : ''}`,
-      existingTag || categories[0]?.name || '',
-    )?.trim();
-    if (!targetTag) return;
+  function startTeachTask(todo: TodoItem) {
+    const currentTags = todo.ashiTags?.join(', ') ?? todo.ashiTaskJson?.taskCategory ?? '';
+    setTeachingTodo(todo);
+    setTeachDraft(currentTags ? `Put this task in: ${currentTags}` : '');
+    setStatus('');
+  }
 
-    const now = new Date().toISOString();
-    const nextRules = appendTeachingExampleToRules(rulesPrompt, targetTag, todo.title);
-    const matchedCategory = categories.find((category) => normalizeTagName(category.name) === normalizeTagName(targetTag));
-    const nextTodos = store.todos.map((item) => {
-      if (item.id !== todo.id || !matchedCategory) return item;
-      return {
-        ...item,
-        ashiCategoryId: matchedCategory.id,
-        ashiTags: [matchedCategory.name],
-        ashiTaskJson: {
-          taskCategory: matchedCategory.name,
-          taskTags: [matchedCategory.name],
-          taskName: item.ashiTaskJson?.taskName || item.title,
-          moveToNextDay: item.ashiTaskJson?.moveToNextDay ?? true,
+  async function submitTeachInstruction() {
+    const todo = teachingTodo;
+    const instruction = teachDraft.trim();
+    if (!todo || !instruction || teachSubmitting) return;
+    setTeachSubmitting(true);
+    setClassifying(true);
+    setStatus('');
+    try {
+      const intent = await parseTeachIntent(todo, instruction);
+      if (!intent.taskTags.length) throw new Error('No category found in teach text.');
+      const nextRules = appendTeachingIntentToRules(rulesPrompt, intent, todo.title, instruction);
+      const nextCategories = await generateCategoriesFromRules(nextRules);
+      const assignments = await classifyWithDeepSeek(tasks, nextCategories);
+      const taughtAssignment = assignmentFromTeach(todo, intent, nextCategories);
+      const assignmentMap = new Map(assignments.map((assignment) => [assignment.todoId, assignment]));
+      if (taughtAssignment) assignmentMap.set(todo.id, taughtAssignment);
+      const now = new Date().toISOString();
+      const activeIds = new Set(tasks.map((item) => item.id));
+      const clearedTodos = store.todos.map((item) =>
+        activeIds.has(item.id)
+          ? { ...item, ashiCategoryId: undefined, ashiTags: undefined, ashiTaskJson: undefined, updatedAt: now }
+          : item,
+      );
+
+      await persist({
+        ...store,
+        todos: applyAssignments(clearedTodos, Array.from(assignmentMap.values()), now),
+        ashiSettings: {
+          ...store.ashiSettings,
+          categories: nextCategories,
+          rulesPrompt: nextRules,
+          categoriesSource: nextRules,
+          rolloverPrompt: nextRules,
+          rolloverPromptUpdatedAt: now,
         },
         updatedAt: now,
-      };
-    });
-
-    await persist({
-      ...store,
-      todos: nextTodos,
-      ashiSettings: {
-        ...store.ashiSettings,
-        rulesPrompt: nextRules,
-        categoriesSource: nextRules,
-        rolloverPrompt: nextRules,
-        rolloverPromptUpdatedAt: now,
-      },
-      updatedAt: now,
-    });
-    setRulesDraft(nextRules);
-    setRulesOpen(true);
-    setActiveTag('');
-    setStatus(`Teaching example saved under "${targetTag}". Click AI organize to re-tag all tasks.`);
+      });
+      setRulesDraft(nextRules);
+      setTeachingTodo(null);
+      setTeachDraft('');
+      setActiveTag('');
+      setStatus(`Learned "${todo.title}" and re-tagged ${assignmentMap.size} task${assignmentMap.size === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Teach failed.');
+    } finally {
+      setTeachSubmitting(false);
+      setClassifying(false);
+    }
   }
 
   async function removeCategory(categoryId: string) {
@@ -671,8 +755,19 @@ export function AshiPage() {
       <TaskRow
         key={todo.id}
         todo={todo}
+        isTeaching={teachingTodo?.id === todo.id}
+        teachDraft={teachDraft}
+        teachSubmitting={teachSubmitting}
         onTeach={(item) => {
-          void teachTaskCategory(item);
+          startTeachTask(item);
+        }}
+        onTeachDraftChange={setTeachDraft}
+        onSubmitTeach={() => {
+          void submitTeachInstruction();
+        }}
+        onCancelTeach={() => {
+          setTeachingTodo(null);
+          setTeachDraft('');
         }}
         onComplete={(item) => {
           if (!window.confirm(`Mark "${item.title}" as complete?`)) return;

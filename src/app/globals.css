@@ -2467,6 +2467,30 @@ label {
   line-height: 1.35;
 }
 
+.ashi-task-teach {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 2px solid rgba(104, 167, 255, 0.28);
+}
+
+.ashi-task-teach textarea {
+  min-height: 92px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 14px;
+  border: 2px solid #68a7ff;
+  background: var(--surface-strong);
+  color: var(--accent-dark);
+  font-weight: 600;
+  box-shadow: 0 3px 0 rgba(65, 123, 190, 0.28);
+  font-family: inherit;
+  resize: vertical;
+  line-height: 1.35;
+}
+
 .ashi-rules-actions {
   display: flex;
   justify-content: flex-end;
@@ -2606,6 +2630,7 @@ label {
 }
 
 .ashi-rules-editor textarea::placeholder,
+.ashi-task-teach textarea::placeholder,
 .ashi-chat-box input::placeholder {
   color: var(--muted);
 }

@@ -31,6 +31,12 @@ export type RolloverDecision = {
   reason?: string;
 };
 
+export type TeachIntent = {
+  taskTags: string[];
+  moveToNextDay: boolean | null;
+  note?: string;
+};
+
 function compactTodo(todo: TodoItem) {
   return {
     id: todo.id,
@@ -271,6 +277,67 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           createdAt: now,
         };
       });
+  }
+}
+
+export async function interpretTeachInstruction(
+  todo: TodoItem,
+  instruction: string,
+  categories: AshiCategory[],
+): Promise<TeachIntent> {
+  const cleanInstruction = instruction.trim();
+  if (!cleanInstruction) return { taskTags: [], moveToNextDay: null };
+
+  try {
+    const json = (await deepSeekJson(
+      [
+        {
+          role: 'system',
+          content:
+            'You extract user correction intent for a todo classifier. Return JSON only. Preserve Hinglish/Hindi category names exactly.',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            instructions:
+              'The user is teaching the classifier for one todo. Extract all category/tag names the task should belong to. Also detect whether unfinished task should move to next day. Return {"taskTags":["category 1","category 2"],"moveToNextDay":true|false|null,"note":"short rule note"}. Use existing category names when user clearly refers to them, but include new category names if user asks for a new one.',
+            todo: compactTodo(todo),
+            userText: cleanInstruction,
+            existingCategories: categoryPayload(categories),
+          }),
+        },
+      ],
+      700,
+    )) as Partial<TeachIntent> & { taskTags?: unknown; moveToNextDay?: unknown };
+
+    const taskTags = Array.isArray(json.taskTags)
+      ? json.taskTags.map((tag) => cleanString(tag)).filter(Boolean)
+      : [];
+    const moveToNextDay = typeof json.moveToNextDay === 'boolean' ? json.moveToNextDay : null;
+    const note = cleanString(json.note) || cleanInstruction;
+    return { taskTags, moveToNextDay, note };
+  } catch {
+    const lowered = cleanInstruction.toLowerCase();
+    const moveToNextDay =
+      /\b(no|not|mat|nahi|nahin|dont|don't)\b.*\b(next|tomorrow|kal)\b/.test(lowered)
+        ? false
+        : /\b(next|tomorrow|kal|carry|move)\b/.test(lowered)
+          ? true
+          : null;
+    const taskTags = categories
+      .filter((category) => lowered.includes(category.name.toLowerCase()))
+      .map((category) => category.name);
+    if (taskTags.length) return { taskTags, moveToNextDay, note: cleanInstruction };
+    const roughTags =
+      /(?:put(?: this task)? in|tags?|categor(?:y|ies)|under|daalo|dalo)\s*:?\s*([^.;]+)/i.exec(cleanInstruction)?.[1] ?? '';
+    return {
+      taskTags: roughTags
+        .split(/,|\band\b|&|\+/i)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      moveToNextDay,
+      note: cleanInstruction,
+    };
   }
 }
 
