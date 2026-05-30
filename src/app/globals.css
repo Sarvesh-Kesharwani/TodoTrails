@@ -2012,19 +2012,21 @@ label {
 
 .ashi-image-pick {
   display: grid;
-  gap: 0.25rem;
+  gap: 0.12rem;
   justify-items: center;
   align-content: center;
   width: 100%;
-  max-width: 220px;
-  min-height: 110px;
-  padding: 0.85rem;
+  max-width: 96px;
+  height: 54px;
+  min-height: 54px;
+  padding: 0.38rem 0.45rem;
   text-align: center;
   color: var(--accent-dark);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 232, 226, 0.7));
   border: 2px dashed var(--accent-soft);
-  border-radius: 18px;
+  border-radius: 12px;
+  align-self: center;
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
   box-shadow: 0 4px 0 rgba(223, 177, 166, 0.55);
@@ -2039,7 +2041,7 @@ label {
 .ashi-image-pick.has-image {
   border-style: solid;
   background: var(--surface-strong);
-  padding: 0.45rem;
+  padding: 0.25rem;
 }
 
 .ashi-image-pick input {
@@ -2051,25 +2053,25 @@ label {
 }
 
 .ashi-image-icon {
-  width: 38px;
-  height: 38px;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
   display: grid;
   place-items: center;
   background: linear-gradient(180deg, var(--accent-soft), var(--accent));
   color: #fff;
-  font-size: 1.4rem;
+  font-size: 0.95rem;
   font-weight: 800;
   box-shadow: 0 3px 0 var(--accent-dark);
 }
 
 .ashi-image-title {
   font-weight: 800;
-  font-size: 0.92rem;
+  font-size: 0.68rem;
 }
 
 .ashi-image-hint {
-  font-size: 0.72rem;
+  font-size: 0.55rem;
   font-weight: 600;
   color: var(--muted);
 }
@@ -2083,9 +2085,9 @@ label {
 
 .ashi-image-thumb img {
   width: 100%;
-  max-height: 96px;
+  max-height: 42px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .ashi-image-name {
@@ -2375,14 +2377,13 @@ label {
   min-width: 0;
 }
 
-.ashi-category-add,
+.ashi-category-builder,
 .ashi-chat-box {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.55rem;
 }
 
-.ashi-category-add input,
+.ashi-category-builder textarea,
 .ashi-rollover-box textarea,
 .ashi-chat-box input {
   min-height: 44px;
@@ -2394,6 +2395,12 @@ label {
   font-weight: 600;
   box-shadow: 0 3px 0 rgba(223, 177, 166, 0.7);
   font-family: inherit;
+}
+
+.ashi-category-builder textarea {
+  min-height: 118px;
+  resize: vertical;
+  line-height: 1.35;
 }
 
 .ashi-rollover-box {
@@ -2422,7 +2429,8 @@ label {
 
 .ashi-category-details[open] .ashi-task-stack,
 .ashi-category-details[open] .ashi-empty,
-.ashi-category-details[open] .ashi-category-actions {
+.ashi-category-details[open] .ashi-category-actions,
+.ashi-category-details[open] .ashi-category-description {
   margin: 0 0.65rem 0.65rem;
 }
 
@@ -2447,6 +2455,13 @@ label {
   font-weight: 800;
   text-decoration: underline;
   cursor: pointer;
+}
+
+.ashi-category-description {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .ashi-chat-toggle {
@@ -2534,7 +2549,7 @@ label {
   border: 2px solid rgba(255, 255, 255, 0.8);
 }
 
-.ashi-category-add input::placeholder,
+.ashi-category-builder textarea::placeholder,
 .ashi-chat-box input::placeholder {
   color: var(--muted);
 }

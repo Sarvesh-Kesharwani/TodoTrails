@@ -10,8 +10,18 @@ type DeepSeekMessage = {
 export type CategoryAssignment = {
   todoId: string;
   categoryId: string;
+  taskCategory: string;
+  taskName: string;
+  moveToNextDay: boolean;
   confidence?: number;
   reason?: string;
+};
+
+export type GeneratedCategory = {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
 };
 
 export type RolloverDecision = {
@@ -29,6 +39,7 @@ function compactTodo(todo: TodoItem) {
     deadline: todo.deadline,
     scheduledAt: todo.scheduledAt,
     categoryId: todo.ashiCategoryId,
+    generatedJson: todo.ashiTaskJson,
     rolloverStatus: todo.rolloverStatus,
   };
 }
@@ -81,13 +92,43 @@ async function deepSeekJson(messages: DeepSeekMessage[], maxTokens: number) {
 function fallbackCategory(todo: TodoItem, categories: AshiCategory[]) {
   const text = `${todo.title} ${todo.notes ?? ''}`.toLowerCase();
   const byName = categories.find((category) => {
-    const tokens = category.name
+    const tokens = `${category.name} ${category.description ?? ''}`
       .toLowerCase()
       .split(/[^a-z0-9\u0900-\u097f]+/i)
       .filter((token) => token.length > 2 && token !== 'jub');
     return tokens.some((token) => text.includes(token));
   });
   return byName?.id ?? categories[0]?.id ?? '';
+}
+
+function slugId(value: string) {
+  const slug = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return `ashi-cat-${slug || 'category'}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function cleanString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function categoryPayload(categories: AshiCategory[]) {
+  return categories.map((category) => ({
+    id: category.id,
+    name: category.name,
+    description: category.description,
+  }));
+}
+
+function matchCategoryId(taskCategory: string, categories: AshiCategory[]) {
+  const clean = taskCategory.trim().toLowerCase();
+  const found =
+    categories.find((category) => category.id.toLowerCase() === clean) ??
+    categories.find((category) => category.name.trim().toLowerCase() === clean);
+  return found?.id;
 }
 
 export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[]): Promise<CategoryAssignment[]> {
@@ -99,14 +140,14 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
         {
           role: 'system',
           content:
-            'You classify todos into exactly one user-defined category. Use only category IDs supplied. Return JSON only.',
+            'You classify todos into exactly one user-defined category using category descriptions. Return JSON only.',
         },
         {
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'For each todo, read title and description. Pick the best category from categories. Return {"assignments":[{"todoId":"...","categoryId":"...","confidence":0.0,"reason":"short"}]}.',
-            categories: categories.map((category) => ({ id: category.id, name: category.name })),
+              'For each todo, return this exact JSON shape: {"assignments":[{"todoId":"...","taskCategory":"one exact category name from categories","taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+            categories: categoryPayload(categories),
             todos: todos.map(compactTodo),
           }),
         },
@@ -114,24 +155,101 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
       Math.min(1800, Math.max(400, todos.length * 70)),
     )) as { assignments?: CategoryAssignment[] };
 
-    const categoryIds = new Set(categories.map((category) => category.id));
     const todoIds = new Set(todos.map((todo) => todo.id));
     const assignments = Array.isArray(json.assignments) ? json.assignments : [];
-    return assignments
-      .filter((item) => todoIds.has(item.todoId) && categoryIds.has(item.categoryId))
-      .map((item) => ({
-        todoId: item.todoId,
-        categoryId: item.categoryId,
-        confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : undefined,
-        reason: typeof item.reason === 'string' ? item.reason.slice(0, 160) : undefined,
-      }));
+    const parsed: Array<CategoryAssignment | null> = assignments.map((item) => {
+      const raw = item as Partial<CategoryAssignment>;
+      const todoId = cleanString(raw.todoId);
+      const taskCategory = cleanString(raw.taskCategory);
+      const categoryId = cleanString(raw.categoryId) || matchCategoryId(taskCategory, categories);
+      const sourceTodo = todos.find((todo) => todo.id === todoId);
+      if (!todoId || !todoIds.has(todoId) || !categoryId) return null;
+      const category = categories.find((entry) => entry.id === categoryId);
+      if (!category) return null;
+      const taskName = cleanString(raw.taskName) || sourceTodo?.title || '';
+      const assignment: CategoryAssignment = {
+        todoId,
+        categoryId,
+        taskCategory: category.name,
+        taskName,
+        moveToNextDay: Boolean(raw.moveToNextDay),
+      };
+      if (Number.isFinite(Number(raw.confidence))) assignment.confidence = Number(raw.confidence);
+      if (typeof raw.reason === 'string') assignment.reason = raw.reason.slice(0, 160);
+      return assignment;
+    });
+    return parsed.filter((item): item is CategoryAssignment => Boolean(item));
   } catch {
     return todos.map((todo) => ({
       todoId: todo.id,
       categoryId: fallbackCategory(todo, categories),
+      taskCategory: categories.find((category) => category.id === fallbackCategory(todo, categories))?.name ?? categories[0]?.name ?? '',
+      taskName: todo.title,
+      moveToNextDay: true,
       confidence: 0,
       reason: 'Fallback category match.',
     }));
+  }
+}
+
+export async function generateCategoriesFromText(source: string): Promise<GeneratedCategory[]> {
+  const cleanSource = source.trim();
+  if (!cleanSource) return [];
+
+  try {
+    const json = (await deepSeekJson(
+      [
+        {
+          role: 'system',
+          content:
+            'You convert user category instructions into concise todo categories. Return JSON only. Preserve Hinglish/Hindi names when user uses them.',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            instructions:
+              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Return {"categories":[{"name":"category name","description":"classification rule"}]}.',
+            userText: cleanSource,
+          }),
+        },
+      ],
+      1200,
+    )) as { categories?: Array<{ name?: string; description?: string }> };
+
+    const now = new Date().toISOString();
+    const seen = new Set<string>();
+    return (Array.isArray(json.categories) ? json.categories : [])
+      .map((category) => ({
+        name: cleanString(category.name),
+        description: cleanString(category.description),
+      }))
+      .filter((category) => {
+        const key = category.name.toLowerCase();
+        if (!category.name || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((category) => ({
+        id: slugId(category.name),
+        name: category.name,
+        description: category.description || undefined,
+        createdAt: now,
+      }));
+  } catch {
+    const now = new Date().toISOString();
+    return cleanSource
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name, ...rest] = line.split(/[:\-–—]/);
+        return {
+          id: slugId(name),
+          name: name.trim(),
+          description: rest.join('-').trim() || line,
+          createdAt: now,
+        };
+      });
   }
 }
 

@@ -17,6 +17,7 @@ export interface TodoItem {
   done: boolean;
   repetitive?: boolean;
   ashiCategoryId?: string;
+  ashiTaskJson?: AshiTaskJson;
   rolloverStatus?: 'undone' | 'moved-next-day';
   rolloverDecidedAt?: string;
   attachments?: TodoAttachment[];
@@ -56,11 +57,19 @@ export type SortMap = Record<TimeBucket, SortOption>;
 export interface AshiCategory {
   id: string;
   name: string;
+  description?: string;
   createdAt: string;
+}
+
+export interface AshiTaskJson {
+  taskCategory: string;
+  taskName: string;
+  moveToNextDay: boolean;
 }
 
 export interface AshiSettings {
   categories: AshiCategory[];
+  categoriesSource?: string;
   rolloverPrompt: string;
   rolloverPromptUpdatedAt?: string;
   lastRolloverDate?: string;
@@ -90,11 +99,11 @@ Use "move_next_day" when the task is still actionable today and should remain vi
 Use "undone" when it should stay as an overdue unfinished task for review instead of being carried forward automatically.`;
 
 const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
-  { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-katni-city-jaayenge', name: 'Jub Katni city jaayenge', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-jbp-jaayenge', name: 'Jub JBP jaayenge', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', description: 'Tasks to do when Indu comes.', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', description: 'Shopping or errands for CNC.', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-katni-city-jaayenge', name: 'Jub Katni city jaayenge', description: 'Tasks to do in Katni city.', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-jbp-jaayenge', name: 'Jub JBP jaayenge', description: 'Tasks to do in Jabalpur.', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', description: 'Electrical work when electrician comes.', createdAt: new Date(0).toISOString() },
 ];
 
 export const DEFAULT_STORE: TodoStore = {
@@ -188,6 +197,7 @@ function normalizeTodo(raw: unknown): TodoItem | null {
     done: safeBucket === 'completed' || Boolean(data.done),
     repetitive: Boolean(data.repetitive),
     ashiCategoryId: cleanText(data.ashiCategoryId) || undefined,
+    ashiTaskJson: normalizeAshiTaskJson(data.ashiTaskJson),
     rolloverStatus:
       data.rolloverStatus === 'undone' || data.rolloverStatus === 'moved-next-day' ? data.rolloverStatus : undefined,
     rolloverDecidedAt: cleanText(data.rolloverDecidedAt) || undefined,
@@ -195,6 +205,19 @@ function normalizeTodo(raw: unknown): TodoItem | null {
     dimensionValues,
     createdAt: cleanText(data.createdAt) || now,
     updatedAt: cleanText(data.updatedAt) || now,
+  };
+}
+
+function normalizeAshiTaskJson(raw: unknown): AshiTaskJson | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const data = raw as Partial<AshiTaskJson>;
+  const taskCategory = cleanText(data.taskCategory);
+  const taskName = cleanText(data.taskName);
+  if (!taskCategory || !taskName) return undefined;
+  return {
+    taskCategory,
+    taskName,
+    moveToNextDay: Boolean(data.moveToNextDay),
   };
 }
 
@@ -207,6 +230,7 @@ function normalizeAshiCategory(raw: unknown): AshiCategory | null {
   return {
     id,
     name,
+    description: cleanText(data.description) || undefined,
     createdAt: cleanText(data.createdAt) || new Date(0).toISOString(),
   };
 }
@@ -219,6 +243,7 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
     : DEFAULT_STORE.ashiSettings.categories;
   return {
     categories,
+    categoriesSource: cleanText(data.categoriesSource) || undefined,
     rolloverPrompt: cleanText(data.rolloverPrompt) || DEFAULT_ASHI_ROLLOVER_PROMPT,
     rolloverPromptUpdatedAt: cleanText(data.rolloverPromptUpdatedAt) || undefined,
     lastRolloverDate: cleanText(data.lastRolloverDate) || undefined,

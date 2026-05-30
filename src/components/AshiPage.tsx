@@ -9,21 +9,19 @@ import { uploadTodoAttachment } from '@/lib/attachments-client';
 import { useTodoStore } from './useTodoStore';
 
 type ChatMessage = { role: 'user' | 'assistant'; text: string };
-type CategoryAssignment = { todoId: string; categoryId: string; reason?: string };
+type CategoryAssignment = {
+  todoId: string;
+  categoryId: string;
+  taskCategory: string;
+  taskName: string;
+  moveToNextDay: boolean;
+  reason?: string;
+};
 type RolloverDecision = { todoId: string; action: 'undone' | 'move_next_day'; reason?: string };
+type GeneratedCategory = AshiCategory;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function slugId(value: string) {
-  const slug = value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-  return `ashi-cat-${slug || uid()}-${uid()}`;
 }
 
 function localDateKey(date: Date) {
@@ -43,18 +41,6 @@ function sortedTodos(todos: TodoItem[]) {
     });
 }
 
-function addDays(date: Date, days: number) {
-  const out = startOfLocalDay(date);
-  out.setDate(out.getDate() + days);
-  return out;
-}
-
-function startOfWeek(date: Date) {
-  const out = startOfLocalDay(date);
-  out.setDate(out.getDate() - ((out.getDay() + 6) % 7));
-  return out;
-}
-
 function taskDueDate(todo: TodoItem) {
   return parseDate(todo.deadline ?? todo.scheduledAt);
 }
@@ -67,32 +53,6 @@ function isPastTodayTodo(todo: TodoItem, today: Date) {
 
 function sameDay(a: Date, b: Date) {
   return startOfLocalDay(a).getTime() === startOfLocalDay(b).getTime();
-}
-
-function dateInHalfOpenRange(date: Date, start: Date, end: Date) {
-  const time = startOfLocalDay(date).getTime();
-  return time >= start.getTime() && time < end.getTime();
-}
-
-function buildTaskDivisions(tasks: TodoItem[], today: Date) {
-  const weekStart = startOfWeek(today);
-  const nextWeekStart = addDays(weekStart, 7);
-  const followingWeekStart = addDays(nextWeekStart, 7);
-
-  return {
-    today: tasks.filter((todo) => {
-      const due = taskDueDate(todo);
-      return due ? sameDay(due, today) : false;
-    }),
-    thisWeek: tasks.filter((todo) => {
-      const due = taskDueDate(todo);
-      return due ? !sameDay(due, today) && dateInHalfOpenRange(due, weekStart, nextWeekStart) : false;
-    }),
-    nextWeek: tasks.filter((todo) => {
-      const due = taskDueDate(todo);
-      return due ? dateInHalfOpenRange(due, nextWeekStart, followingWeekStart) : false;
-    }),
-  };
 }
 
 function groupByCategory(tasks: TodoItem[], categories: AshiCategory[]) {
@@ -128,13 +88,19 @@ type TaskRowProps = {
 
 function TaskRow({ todo, categoryName, onComplete, onEdit, onDelete }: TaskRowProps) {
   const due = taskDueDate(todo);
+  const displayName = todo.ashiTaskJson?.taskName || todo.title;
   return (
     <article className="ashi-task-row">
       <div className="ashi-task-main">
-        <strong>{todo.title}</strong>
+        <strong>{displayName}</strong>
         {todo.notes ? <span>{todo.notes}</span> : null}
         {due ? <span>{due.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span> : null}
         {categoryName ? <span className="ashi-category-chip">{categoryName}</span> : null}
+        {todo.ashiTaskJson ? (
+          <span className={`ashi-category-chip${todo.ashiTaskJson.moveToNextDay ? '' : ' is-warn'}`}>
+            {todo.ashiTaskJson.moveToNextDay ? 'Move next day' : 'Do not auto move'}
+          </span>
+        ) : null}
         {todo.rolloverStatus === 'undone' ? <span className="ashi-category-chip is-warn">Undone from previous day</span> : null}
         {attachmentPreview(todo.attachments)}
       </div>
@@ -259,13 +225,17 @@ export function AshiPage() {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [asking, setAsking] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [newCategory, setNewCategory] = useState('');
   const [classifying, setClassifying] = useState(false);
+  const [categoriesGenerating, setCategoriesGenerating] = useState(false);
+  const categoriesTextRef = useRef<HTMLTextAreaElement | null>(null);
   const rolloverPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const rolloverRunningRef = useRef(false);
 
   const tasks = useMemo(() => sortedTodos(store.todos), [store.todos]);
-  const taskDivisions = useMemo(() => buildTaskDivisions(tasks, today), [tasks, today]);
+  const todayTasks = useMemo(() => tasks.filter((todo) => {
+    const due = taskDueDate(todo);
+    return due ? sameDay(due, today) : false;
+  }), [tasks, today]);
   const categories = store.ashiSettings.categories;
   const categorized = useMemo(() => groupByCategory(tasks, categories), [tasks, categories]);
   const todayKey = useMemo(() => localDateKey(today), [today]);
@@ -361,9 +331,22 @@ export function AshiPage() {
 
   function applyAssignments(items: TodoItem[], assignments: CategoryAssignment[], updatedAt: string) {
     const byTodo = new Map(assignments.map((item) => [item.todoId, item.categoryId]));
+    const byAssignment = new Map(assignments.map((item) => [item.todoId, item]));
     return items.map((todo) => {
       const categoryId = byTodo.get(todo.id);
-      return categoryId ? { ...todo, ashiCategoryId: categoryId, updatedAt } : todo;
+      const assignment = byAssignment.get(todo.id);
+      return categoryId && assignment
+        ? {
+            ...todo,
+            ashiCategoryId: categoryId,
+            ashiTaskJson: {
+              taskCategory: assignment.taskCategory,
+              taskName: assignment.taskName,
+              moveToNextDay: assignment.moveToNextDay,
+            },
+            updatedAt,
+          }
+        : todo;
     });
   }
 
@@ -386,12 +369,23 @@ export function AshiPage() {
         updatedAt: now,
       };
       const assignments = await classifyWithDeepSeek([todo]);
-      const assignedCategoryId = assignments[0]?.categoryId;
-      if (assignedCategoryId) todo = { ...todo, ashiCategoryId: assignedCategoryId };
+      const assignment = assignments[0];
+      if (assignment) {
+        todo = {
+          ...todo,
+          title: assignment.taskName || todo.title,
+          ashiCategoryId: assignment.categoryId,
+          ashiTaskJson: {
+            taskCategory: assignment.taskCategory,
+            taskName: assignment.taskName || todo.title,
+            moveToNextDay: assignment.moveToNextDay,
+          },
+        };
+      }
       await persist({ ...store, todos: [todo, ...store.todos], updatedAt: now });
       setTitle('');
       setImageFile(null);
-      setStatus(assignedCategoryId ? 'Added and categorized.' : 'Added.');
+      setStatus(assignment ? 'Added and categorized.' : 'Added.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Add failed.');
     }
@@ -414,19 +408,6 @@ export function AshiPage() {
     }
   }
 
-  async function addCategory() {
-    const name = newCategory.trim();
-    if (!name) return;
-    const now = new Date().toISOString();
-    const category: AshiCategory = { id: slugId(name), name, createdAt: now };
-    await persist({
-      ...store,
-      ashiSettings: { ...store.ashiSettings, categories: [...categories, category] },
-      updatedAt: now,
-    });
-    setNewCategory('');
-  }
-
   async function removeCategory(categoryId: string) {
     const category = categories.find((item) => item.id === categoryId);
     if (!category || !window.confirm(`Remove category "${category.name}"? Tasks stay saved but become uncategorized.`)) return;
@@ -444,15 +425,44 @@ export function AshiPage() {
     if (!category) return;
     const nextName = window.prompt('Rename category', category.name)?.trim();
     if (!nextName || nextName === category.name) return;
+    const nextDescription = window.prompt('Category description', category.description ?? '')?.trim();
     const now = new Date().toISOString();
     await persist({
       ...store,
       ashiSettings: {
         ...store.ashiSettings,
-        categories: categories.map((item) => (item.id === categoryId ? { ...item, name: nextName } : item)),
+        categories: categories.map((item) => (item.id === categoryId ? { ...item, name: nextName, description: nextDescription || undefined } : item)),
       },
       updatedAt: now,
     });
+  }
+
+  async function generateCategories() {
+    const text = categoriesTextRef.current?.value.trim() ?? '';
+    if (!text || categoriesGenerating) return;
+    setCategoriesGenerating(true);
+    setStatus('');
+    try {
+      const response = await fetch('/api/ashi/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = (await response.json()) as { categories?: GeneratedCategory[]; error?: string };
+      if (!response.ok || !data.categories?.length) throw new Error(data.error || 'No categories generated.');
+      const now = new Date().toISOString();
+      await persist({
+        ...store,
+        todos: store.todos.map((todo) => ({ ...todo, ashiCategoryId: undefined, ashiTaskJson: undefined, updatedAt: now })),
+        ashiSettings: { ...store.ashiSettings, categories: data.categories, categoriesSource: text },
+        updatedAt: now,
+      });
+      setStatus(`Generated ${data.categories.length} categories. Run AI organize to refill tasks.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Category generation failed.');
+    } finally {
+      setCategoriesGenerating(false);
+    }
   }
 
   async function saveRolloverPrompt() {
@@ -551,18 +561,9 @@ export function AshiPage() {
         </div>
         {status ? <p className="ashi-status">{status}</p> : null}
         <div className="ashi-list">
-          <span className="ashi-list-title">Upcoming tasks</span>
+          <span className="ashi-list-title">Today</span>
           {tasks.length === 0 ? <p className="ashi-empty">No tasks yet - add one above.</p> : null}
-          <TaskSection title="Today's tasks" items={taskDivisions.today} emptyText="No tasks due today." renderTaskRow={renderTaskRow} />
-          <TaskSection title="This week tasks" items={taskDivisions.thisWeek} emptyText="No other tasks this week." renderTaskRow={renderTaskRow} />
-          <TaskSection title="Next week tasks" items={taskDivisions.nextWeek} emptyText="No tasks due next week." renderTaskRow={renderTaskRow} />
-          <details className="ashi-task-section ashi-task-details">
-            <summary>
-              <span>All tasks</span>
-              <strong>{tasks.length}</strong>
-            </summary>
-            {tasks.length === 0 ? <p className="ashi-empty">All tasks will show here.</p> : <div className="ashi-task-stack">{tasks.map(renderTaskRow)}</div>}
-          </details>
+          <TaskSection title="Today's tasks" items={todayTasks} emptyText="No tasks due today." renderTaskRow={renderTaskRow} />
         </div>
       </section>
 
@@ -577,17 +578,14 @@ export function AshiPage() {
           </button>
         </div>
 
-        <div className="ashi-category-add">
-          <input
-            value={newCategory}
-            placeholder="new category"
-            onChange={(event) => setNewCategory(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void addCategory();
-            }}
+        <div className="ashi-category-builder">
+          <textarea
+            ref={categoriesTextRef}
+            defaultValue={store.ashiSettings.categoriesSource ?? categories.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n')}
+            placeholder="Mention all categories and rules, one per line. Example: Jub CNC jaayenge: groceries or CNC market tasks."
           />
-          <button type="button" className="btn-3d" onClick={() => void addCategory()}>
-            Add
+          <button type="button" className="btn-3d" onClick={() => void generateCategories()} disabled={categoriesGenerating}>
+            {categoriesGenerating ? 'Generating...' : 'Generate categories'}
           </button>
         </div>
 
@@ -617,6 +615,7 @@ export function AshiPage() {
                   Remove
                 </button>
               </div>
+              {category.description ? <p className="ashi-category-description">{category.description}</p> : null}
               {items.length === 0 ? <p className="ashi-empty">No tasks in this category.</p> : <div className="ashi-task-stack">{items.map(renderTaskRow)}</div>}
             </details>
           ))}
