@@ -11,6 +11,7 @@ export type CategoryAssignment = {
   todoId: string;
   categoryId: string;
   taskCategory: string;
+  taskTags: string[];
   taskName: string;
   moveToNextDay: boolean;
   confidence?: number;
@@ -140,37 +141,52 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
         {
           role: 'system',
           content:
-            'You classify todos into exactly one user-defined category using category descriptions. Return JSON only.',
+            'You tag todos with one or more user-defined category tags. A todo can belong to multiple tags. Return JSON only.',
         },
         {
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'For each todo, return this exact JSON shape: {"assignments":[{"todoId":"...","taskCategory":"one exact category name from categories","taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+              'For each todo, assign all relevant category tags from the provided list. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
             categories: categoryPayload(categories),
             todos: todos.map(compactTodo),
           }),
         },
       ],
       Math.min(1800, Math.max(400, todos.length * 70)),
-    )) as { assignments?: CategoryAssignment[] };
+    )) as { assignments?: Array<Partial<CategoryAssignment> & { taskTags?: string[] }> };
 
     const todoIds = new Set(todos.map((todo) => todo.id));
     const assignments = Array.isArray(json.assignments) ? json.assignments : [];
     const parsed: Array<CategoryAssignment | null> = assignments.map((item) => {
-      const raw = item as Partial<CategoryAssignment>;
+      const raw = item as Partial<CategoryAssignment> & { taskTags?: unknown };
       const todoId = cleanString(raw.todoId);
-      const taskCategory = cleanString(raw.taskCategory);
-      const categoryId = cleanString(raw.categoryId) || matchCategoryId(taskCategory, categories);
+      if (!todoId || !todoIds.has(todoId)) return null;
       const sourceTodo = todos.find((todo) => todo.id === todoId);
-      if (!todoId || !todoIds.has(todoId) || !categoryId) return null;
-      const category = categories.find((entry) => entry.id === categoryId);
-      if (!category) return null;
+
+      // Support both old taskCategory (single) and new taskTags (array)
+      const rawTags: string[] = Array.isArray(raw.taskTags)
+        ? (raw.taskTags as unknown[]).map((t) => cleanString(t)).filter(Boolean)
+        : cleanString(raw.taskCategory) ? [cleanString(raw.taskCategory)] : [];
+
+      // Resolve tag names to category ids; keep only valid ones
+      const resolvedTags = rawTags
+        .map((tagName) => {
+          const catId = matchCategoryId(tagName, categories);
+          return catId ? categories.find((c) => c.id === catId) : undefined;
+        })
+        .filter((c): c is AshiCategory => Boolean(c));
+
+      if (!resolvedTags.length) return null;
+
+      // Primary category = first resolved tag
+      const primaryCategory = resolvedTags[0];
       const taskName = cleanString(raw.taskName) || sourceTodo?.title || '';
       const assignment: CategoryAssignment = {
         todoId,
-        categoryId,
-        taskCategory: category.name,
+        categoryId: primaryCategory.id,
+        taskCategory: primaryCategory.name,
+        taskTags: resolvedTags.map((c) => c.name),
         taskName,
         moveToNextDay: Boolean(raw.moveToNextDay),
       };
@@ -180,15 +196,20 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
     });
     return parsed.filter((item): item is CategoryAssignment => Boolean(item));
   } catch {
-    return todos.map((todo) => ({
-      todoId: todo.id,
-      categoryId: fallbackCategory(todo, categories),
-      taskCategory: categories.find((category) => category.id === fallbackCategory(todo, categories))?.name ?? categories[0]?.name ?? '',
-      taskName: todo.title,
-      moveToNextDay: true,
-      confidence: 0,
-      reason: 'Fallback category match.',
-    }));
+    return todos.map((todo) => {
+      const catId = fallbackCategory(todo, categories);
+      const cat = categories.find((c) => c.id === catId) ?? categories[0];
+      return {
+        todoId: todo.id,
+        categoryId: catId,
+        taskCategory: cat?.name ?? '',
+        taskTags: cat ? [cat.name] : [],
+        taskName: todo.title,
+        moveToNextDay: true,
+        confidence: 0,
+        reason: 'Fallback category match.',
+      };
+    });
   }
 }
 

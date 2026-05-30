@@ -17,6 +17,7 @@ export interface TodoItem {
   done: boolean;
   repetitive?: boolean;
   ashiCategoryId?: string;
+  ashiTags?: string[];
   ashiTaskJson?: AshiTaskJson;
   rolloverStatus?: 'undone' | 'moved-next-day';
   rolloverDecidedAt?: string;
@@ -63,6 +64,7 @@ export interface AshiCategory {
 
 export interface AshiTaskJson {
   taskCategory: string;
+  taskTags: string[];
   taskName: string;
   moveToNextDay: boolean;
 }
@@ -187,6 +189,10 @@ function normalizeTodo(raw: unknown): TodoItem | null {
     ? data.attachments.map((item) => normalizeAttachment(item, now)).filter((item): item is TodoAttachment => Boolean(item))
     : [];
 
+  const rawAshiTags = Array.isArray(data.ashiTags)
+    ? data.ashiTags.map((t) => cleanText(t)).filter(Boolean)
+    : undefined;
+
   return {
     id,
     title,
@@ -197,6 +203,7 @@ function normalizeTodo(raw: unknown): TodoItem | null {
     done: safeBucket === 'completed' || Boolean(data.done),
     repetitive: Boolean(data.repetitive),
     ashiCategoryId: cleanText(data.ashiCategoryId) || undefined,
+    ashiTags: rawAshiTags?.length ? rawAshiTags : undefined,
     ashiTaskJson: normalizeAshiTaskJson(data.ashiTaskJson),
     rolloverStatus:
       data.rolloverStatus === 'undone' || data.rolloverStatus === 'moved-next-day' ? data.rolloverStatus : undefined,
@@ -214,8 +221,12 @@ function normalizeAshiTaskJson(raw: unknown): AshiTaskJson | undefined {
   const taskCategory = cleanText(data.taskCategory);
   const taskName = cleanText(data.taskName);
   if (!taskCategory || !taskName) return undefined;
+  const taskTags = Array.isArray(data.taskTags)
+    ? data.taskTags.map((t) => cleanText(t)).filter(Boolean)
+    : taskCategory ? [taskCategory] : [];
   return {
     taskCategory,
+    taskTags,
     taskName,
     moveToNextDay: Boolean(data.moveToNextDay),
   };

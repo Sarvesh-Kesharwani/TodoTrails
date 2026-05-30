@@ -2372,9 +2372,113 @@ label {
 
 .ashi-categories-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(280px, 1fr) auto auto;
+  grid-template-rows: auto auto auto auto minmax(280px, 1fr) auto auto;
   gap: 0.8rem;
   min-width: 0;
+}
+
+/* ── Tag filter header ─────────────────────────────────────── */
+.ashi-tag-filter {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+  border: 2px solid rgba(239, 81, 64, 0.12);
+}
+
+.ashi-tag-filter-label {
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.ashi-tag-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.ashi-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  border: 2px solid rgba(239, 81, 64, 0.25);
+  background: var(--surface-strong);
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.1s ease;
+  box-shadow: 0 2px 0 rgba(223, 177, 166, 0.55);
+  white-space: nowrap;
+}
+
+.ashi-tag-pill:hover {
+  border-color: var(--accent-soft);
+  background: rgba(255, 122, 103, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 rgba(223, 177, 166, 0.65);
+}
+
+.ashi-tag-pill.is-active {
+  background: linear-gradient(180deg, #5ecb7a, #28a94e);
+  border-color: #1c8840;
+  color: #fff;
+  box-shadow: 0 3px 0 #166334;
+}
+
+.ashi-tag-pill.is-active:hover {
+  background: linear-gradient(180deg, #6fd98a, #30bf5c);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 0 #166334;
+}
+
+.ashi-tag-pill-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ashi-tag-pill.is-active .ashi-tag-pill-count {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ashi-active-tag-actions {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+/* ── Per-task tag chips ──────────────────────────────────────── */
+.ashi-task-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.ashi-tag-chip {
+  display: inline-block;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: #eaf7ff;
+  color: #24546a !important;
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 0 rgba(88, 151, 177, 0.3);
 }
 
 .ashi-category-builder,

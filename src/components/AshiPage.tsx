@@ -13,6 +13,7 @@ type CategoryAssignment = {
   todoId: string;
   categoryId: string;
   taskCategory: string;
+  taskTags: string[];
   taskName: string;
   moveToNextDay: boolean;
   reason?: string;
@@ -55,14 +56,25 @@ function sameDay(a: Date, b: Date) {
   return startOfLocalDay(a).getTime() === startOfLocalDay(b).getTime();
 }
 
-function groupByCategory(tasks: TodoItem[], categories: AshiCategory[]) {
-  const groups = categories.map((category) => ({
-    category,
-    items: tasks.filter((todo) => todo.ashiCategoryId === category.id),
-  }));
-  const categorizedIds = new Set(categories.map((category) => category.id));
-  const uncategorized = tasks.filter((todo) => !todo.ashiCategoryId || !categorizedIds.has(todo.ashiCategoryId));
-  return { groups, uncategorized };
+/** Get all unique tag names across all tasks (from ashiTags or ashiTaskJson.taskTags) */
+function getAllTags(tasks: TodoItem[]): string[] {
+  const seen = new Set<string>();
+  for (const todo of tasks) {
+    const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
+    for (const tag of tags) {
+      if (tag) seen.add(tag);
+    }
+  }
+  return Array.from(seen).sort((a, b) => a.localeCompare(b));
+}
+
+/** Filter tasks by selected tag. Empty string = show all. */
+function filterByTag(tasks: TodoItem[], tag: string): TodoItem[] {
+  if (!tag) return tasks;
+  return tasks.filter((todo) => {
+    const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
+    return tags.includes(tag);
+  });
 }
 
 function attachmentPreview(attachments: TodoAttachment[] | undefined) {
@@ -80,22 +92,28 @@ function attachmentPreview(attachments: TodoAttachment[] | undefined) {
 
 type TaskRowProps = {
   todo: TodoItem;
-  categoryName?: string;
   onComplete: (todo: TodoItem) => void;
   onEdit: (todo: TodoItem) => void;
   onDelete: (todo: TodoItem) => void;
 };
 
-function TaskRow({ todo, categoryName, onComplete, onEdit, onDelete }: TaskRowProps) {
+function TaskRow({ todo, onComplete, onEdit, onDelete }: TaskRowProps) {
   const due = taskDueDate(todo);
   const displayName = todo.ashiTaskJson?.taskName || todo.title;
+  const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
   return (
     <article className="ashi-task-row">
       <div className="ashi-task-main">
         <strong>{displayName}</strong>
         {todo.notes ? <span>{todo.notes}</span> : null}
         {due ? <span>{due.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span> : null}
-        {categoryName ? <span className="ashi-category-chip">{categoryName}</span> : null}
+        {tags.length > 0 ? (
+          <div className="ashi-task-tags">
+            {tags.map((tag) => (
+              <span key={tag} className="ashi-tag-chip">{tag}</span>
+            ))}
+          </div>
+        ) : null}
         {todo.ashiTaskJson ? (
           <span className={`ashi-category-chip${todo.ashiTaskJson.moveToNextDay ? '' : ' is-warn'}`}>
             {todo.ashiTaskJson.moveToNextDay ? 'Move next day' : 'Do not auto move'}
@@ -227,6 +245,7 @@ export function AshiPage() {
   const [chatOpen, setChatOpen] = useState(false);
   const [classifying, setClassifying] = useState(false);
   const [categoriesGenerating, setCategoriesGenerating] = useState(false);
+  const [activeTag, setActiveTag] = useState('');
   const categoriesTextRef = useRef<HTMLTextAreaElement | null>(null);
   const rolloverPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const rolloverRunningRef = useRef(false);
@@ -237,8 +256,30 @@ export function AshiPage() {
     return due ? sameDay(due, today) : false;
   }), [tasks, today]);
   const categories = store.ashiSettings.categories;
-  const categorized = useMemo(() => groupByCategory(tasks, categories), [tasks, categories]);
   const todayKey = useMemo(() => localDateKey(today), [today]);
+
+  // All unique tag names from all tasks
+  const allTags = useMemo(() => getAllTags(tasks), [tasks]);
+
+  // Tasks filtered by active tag
+  const filteredTasks = useMemo(() => filterByTag(tasks, activeTag), [tasks, activeTag]);
+
+  // Count tasks per tag for the filter header
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tag of allTags) {
+      counts[tag] = tasks.filter((todo) => {
+        const tags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? [];
+        return tags.includes(tag);
+      }).length;
+    }
+    return counts;
+  }, [allTags, tasks]);
+
+  const untaggedCount = useMemo(
+    () => tasks.filter((todo) => !(todo.ashiTags?.length ?? todo.ashiTaskJson?.taskTags?.length)).length,
+    [tasks],
+  );
 
   const imagePreview = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ''), [imageFile]);
 
@@ -330,17 +371,17 @@ export function AshiPage() {
   }
 
   function applyAssignments(items: TodoItem[], assignments: CategoryAssignment[], updatedAt: string) {
-    const byTodo = new Map(assignments.map((item) => [item.todoId, item.categoryId]));
-    const byAssignment = new Map(assignments.map((item) => [item.todoId, item]));
+    const byTodo = new Map(assignments.map((item) => [item.todoId, item]));
     return items.map((todo) => {
-      const categoryId = byTodo.get(todo.id);
-      const assignment = byAssignment.get(todo.id);
-      return categoryId && assignment
+      const assignment = byTodo.get(todo.id);
+      return assignment
         ? {
             ...todo,
-            ashiCategoryId: categoryId,
+            ashiCategoryId: assignment.categoryId,
+            ashiTags: assignment.taskTags,
             ashiTaskJson: {
               taskCategory: assignment.taskCategory,
+              taskTags: assignment.taskTags,
               taskName: assignment.taskName,
               moveToNextDay: assignment.moveToNextDay,
             },
@@ -375,8 +416,10 @@ export function AshiPage() {
           ...todo,
           title: assignment.taskName || todo.title,
           ashiCategoryId: assignment.categoryId,
+          ashiTags: assignment.taskTags,
           ashiTaskJson: {
             taskCategory: assignment.taskCategory,
+            taskTags: assignment.taskTags,
             taskName: assignment.taskName || todo.title,
             moveToNextDay: assignment.moveToNextDay,
           },
@@ -385,14 +428,15 @@ export function AshiPage() {
       await persist({ ...store, todos: [todo, ...store.todos], updatedAt: now });
       setTitle('');
       setImageFile(null);
-      setStatus(assignment ? 'Added and categorized.' : 'Added.');
+      setStatus(assignment ? `Added with tags: ${assignment.taskTags.join(', ')}.` : 'Added.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Add failed.');
     }
   }
 
   async function organizeAllTasks() {
-    const items = tasks.filter((todo) => categories.length && (!todo.ashiCategoryId || !categories.some((category) => category.id === todo.ashiCategoryId)));
+    const untagged = tasks.filter((todo) => !(todo.ashiTags?.length ?? todo.ashiTaskJson?.taskTags?.length));
+    const items = categories.length ? untagged : [];
     if (!items.length || classifying) return;
     setClassifying(true);
     setStatus('');
@@ -400,7 +444,7 @@ export function AshiPage() {
       const assignments = await classifyWithDeepSeek(items);
       const now = new Date().toISOString();
       await persist({ ...store, todos: applyAssignments(store.todos, assignments, now), updatedAt: now });
-      setStatus(`Organized ${assignments.length} task${assignments.length === 1 ? '' : 's'}.`);
+      setStatus(`Tagged ${assignments.length} task${assignments.length === 1 ? '' : 's'}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Organize failed.');
     } finally {
@@ -410,31 +454,58 @@ export function AshiPage() {
 
   async function removeCategory(categoryId: string) {
     const category = categories.find((item) => item.id === categoryId);
-    if (!category || !window.confirm(`Remove category "${category.name}"? Tasks stay saved but become uncategorized.`)) return;
+    if (!category || !window.confirm(`Remove tag "${category.name}"? Tasks stay saved but lose this tag.`)) return;
     const now = new Date().toISOString();
     await persist({
       ...store,
-      todos: store.todos.map((todo) => (todo.ashiCategoryId === categoryId ? { ...todo, ashiCategoryId: undefined, updatedAt: now } : todo)),
+      todos: store.todos.map((todo) => {
+        if (todo.ashiCategoryId === categoryId || todo.ashiTags?.includes(category.name)) {
+          return {
+            ...todo,
+            ashiCategoryId: todo.ashiCategoryId === categoryId ? undefined : todo.ashiCategoryId,
+            ashiTags: todo.ashiTags?.filter((t) => t !== category.name),
+            ashiTaskJson: todo.ashiTaskJson
+              ? { ...todo.ashiTaskJson, taskTags: (todo.ashiTaskJson.taskTags ?? []).filter((t) => t !== category.name) }
+              : undefined,
+            updatedAt: now,
+          };
+        }
+        return todo;
+      }),
       ashiSettings: { ...store.ashiSettings, categories: categories.filter((item) => item.id !== categoryId) },
       updatedAt: now,
     });
+    if (activeTag === category.name) setActiveTag('');
   }
 
   async function renameCategory(categoryId: string) {
     const category = categories.find((item) => item.id === categoryId);
     if (!category) return;
-    const nextName = window.prompt('Rename category', category.name)?.trim();
+    const nextName = window.prompt('Rename tag', category.name)?.trim();
     if (!nextName || nextName === category.name) return;
-    const nextDescription = window.prompt('Category description', category.description ?? '')?.trim();
+    const nextDescription = window.prompt('Tag description', category.description ?? '')?.trim();
     const now = new Date().toISOString();
     await persist({
       ...store,
+      todos: store.todos.map((todo) => {
+        const hasTags = todo.ashiTags?.includes(category.name) || todo.ashiTaskJson?.taskTags?.includes(category.name);
+        if (!hasTags) return todo;
+        return {
+          ...todo,
+          ashiTags: todo.ashiTags?.map((t) => (t === category.name ? nextName : t)),
+          ashiTaskJson: todo.ashiTaskJson
+            ? { ...todo.ashiTaskJson, taskTags: (todo.ashiTaskJson.taskTags ?? []).map((t) => (t === category.name ? nextName : t)) }
+            : undefined,
+          updatedAt: now,
+        };
+      }),
       ashiSettings: {
         ...store.ashiSettings,
         categories: categories.map((item) => (item.id === categoryId ? { ...item, name: nextName, description: nextDescription || undefined } : item)),
       },
       updatedAt: now,
     });
+    if (activeTag === category.name) setActiveTag(nextName);
   }
 
   async function generateCategories() {
@@ -449,17 +520,18 @@ export function AshiPage() {
         body: JSON.stringify({ text }),
       });
       const data = (await response.json()) as { categories?: GeneratedCategory[]; error?: string };
-      if (!response.ok || !data.categories?.length) throw new Error(data.error || 'No categories generated.');
+      if (!response.ok || !data.categories?.length) throw new Error(data.error || 'No tags generated.');
       const now = new Date().toISOString();
       await persist({
         ...store,
-        todos: store.todos.map((todo) => ({ ...todo, ashiCategoryId: undefined, ashiTaskJson: undefined, updatedAt: now })),
+        todos: store.todos.map((todo) => ({ ...todo, ashiCategoryId: undefined, ashiTags: undefined, ashiTaskJson: undefined, updatedAt: now })),
         ashiSettings: { ...store.ashiSettings, categories: data.categories, categoriesSource: text },
         updatedAt: now,
       });
-      setStatus(`Generated ${data.categories.length} categories. Run AI organize to refill tasks.`);
+      setActiveTag('');
+      setStatus(`Generated ${data.categories.length} tags. Run AI organize to tag tasks.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Category generation failed.');
+      setStatus(error instanceof Error ? error.message : 'Tag generation failed.');
     } finally {
       setCategoriesGenerating(false);
     }
@@ -498,12 +570,10 @@ export function AshiPage() {
   }
 
   function renderTaskRow(todo: TodoItem) {
-    const categoryName = categories.find((category) => category.id === todo.ashiCategoryId)?.name;
     return (
       <TaskRow
         key={todo.id}
         todo={todo}
-        categoryName={categoryName}
         onComplete={(item) => {
           if (!window.confirm(`Mark "${item.title}" as complete?`)) return;
           void updateTodo(item.id, (next) => ({ ...next, done: true, bucket: 'completed' }));
@@ -556,7 +626,7 @@ export function AshiPage() {
             </button>
           ) : null}
           <button type="button" className="btn-3d ashi-add-btn" onClick={() => void addTask()}>
-            add + auto categorize
+            add + auto tag
           </button>
         </div>
         {status ? <p className="ashi-status">{status}</p> : null}
@@ -570,22 +640,80 @@ export function AshiPage() {
       <section className="panel ashi-categories-panel">
         <div className="panel-head">
           <div>
-            <span className="section-eyebrow">Ashi categories</span>
+            <span className="section-eyebrow">Ashi tags</span>
             <h2>All-time tasks</h2>
           </div>
           <button type="button" className="btn-ghost" onClick={() => void organizeAllTasks()} disabled={classifying || !tasks.length}>
-            {classifying ? 'Organizing...' : 'AI organize'}
+            {classifying ? 'Tagging...' : 'AI organize'}
           </button>
+        </div>
+
+        {/* Tag filter tabs header */}
+        <div className="ashi-tag-filter">
+          <div className="ashi-tag-filter-label">TAGS</div>
+          <div className="ashi-tag-filter-bar">
+            <button
+              type="button"
+              className={`ashi-tag-pill${activeTag === '' ? ' is-active' : ''}`}
+              onClick={() => setActiveTag('')}
+            >
+              All tags <span className="ashi-tag-pill-count">{tasks.length}</span>
+            </button>
+            {untaggedCount > 0 && (
+              <button
+                type="button"
+                className={`ashi-tag-pill${activeTag === '__untagged__' ? ' is-active' : ''}`}
+                onClick={() => setActiveTag('__untagged__')}
+              >
+                Untagged <span className="ashi-tag-pill-count">{untaggedCount}</span>
+              </button>
+            )}
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
+                onClick={() => setActiveTag(tag)}
+              >
+                {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+          {/* Tag management: rename/remove */}
+          {activeTag && activeTag !== '__untagged__' && categories.find((c) => c.name === activeTag) ? (
+            <div className="ashi-active-tag-actions">
+              <button
+                type="button"
+                className="ashi-category-link"
+                onClick={() => {
+                  const cat = categories.find((c) => c.name === activeTag);
+                  if (cat) void renameCategory(cat.id);
+                }}
+              >
+                Rename tag
+              </button>
+              <button
+                type="button"
+                className="ashi-category-link"
+                onClick={() => {
+                  const cat = categories.find((c) => c.name === activeTag);
+                  if (cat) void removeCategory(cat.id);
+                }}
+              >
+                Remove tag
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="ashi-category-builder">
           <textarea
             ref={categoriesTextRef}
             defaultValue={store.ashiSettings.categoriesSource ?? categories.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n')}
-            placeholder="Mention all categories and rules, one per line. Example: Jub CNC jaayenge: groceries or CNC market tasks."
+            placeholder="Mention all tags and rules, one per line. Example: Jub CNC jaayenge: groceries or CNC market tasks."
           />
           <button type="button" className="btn-3d" onClick={() => void generateCategories()} disabled={categoriesGenerating}>
-            {categoriesGenerating ? 'Generating...' : 'Generate categories'}
+            {categoriesGenerating ? 'Generating...' : 'Generate tags'}
           </button>
         </div>
 
@@ -600,36 +728,37 @@ export function AshiPage() {
           </button>
         </div>
 
+        {/* Filtered task list */}
         <div className="ashi-category-groups">
-          {categorized.groups.map(({ category, items }) => (
-            <details key={category.id} className="ashi-task-section ashi-task-details ashi-category-details" open>
-              <summary>
-                <span>{category.name}</span>
-                <strong>{items.length}</strong>
-              </summary>
-              <div className="ashi-category-actions">
-                <button type="button" className="ashi-category-link" onClick={() => void renameCategory(category.id)}>
-                  Rename
-                </button>
-                <button type="button" className="ashi-category-link" onClick={() => void removeCategory(category.id)}>
-                  Remove
-                </button>
+          {activeTag === '__untagged__' ? (
+            <div className="ashi-task-section">
+              <div className="ashi-task-section-head">
+                <h3>Untagged</h3>
+                <span>{untaggedCount}</span>
               </div>
-              {category.description ? <p className="ashi-category-description">{category.description}</p> : null}
-              {items.length === 0 ? <p className="ashi-empty">No tasks in this category.</p> : <div className="ashi-task-stack">{items.map(renderTaskRow)}</div>}
-            </details>
-          ))}
-          <details className="ashi-task-section ashi-task-details ashi-category-details" open={categorized.uncategorized.length > 0}>
-            <summary>
-              <span>Uncategorized</span>
-              <strong>{categorized.uncategorized.length}</strong>
-            </summary>
-            {categorized.uncategorized.length === 0 ? (
-              <p className="ashi-empty">All active tasks have categories.</p>
-            ) : (
-              <div className="ashi-task-stack">{categorized.uncategorized.map(renderTaskRow)}</div>
-            )}
-          </details>
+              {untaggedCount === 0 ? (
+                <p className="ashi-empty">All tasks are tagged.</p>
+              ) : (
+                <div className="ashi-task-stack">
+                  {tasks
+                    .filter((todo) => !(todo.ashiTags?.length ?? todo.ashiTaskJson?.taskTags?.length))
+                    .map(renderTaskRow)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="ashi-task-section">
+              <div className="ashi-task-section-head">
+                <h3>{activeTag || 'All tasks'}</h3>
+                <span>{filteredTasks.length}</span>
+              </div>
+              {filteredTasks.length === 0 ? (
+                <p className="ashi-empty">No tasks{activeTag ? ` tagged "${activeTag}"` : ''}.</p>
+              ) : (
+                <div className="ashi-task-stack">{filteredTasks.map(renderTaskRow)}</div>
+              )}
+            </div>
+          )}
         </div>
 
         <button type="button" className="btn-3d ashi-chat-toggle" onClick={() => setChatOpen((open) => !open)}>
