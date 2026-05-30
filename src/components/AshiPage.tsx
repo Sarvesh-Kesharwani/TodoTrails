@@ -61,6 +61,18 @@ function normalizeTagName(value: string) {
   return value.trim().toLowerCase();
 }
 
+function inferTagLayer(tag: string, category?: AshiCategory): 'generic' | 'specific' {
+  if (category?.layer === 'generic' || category?.layer === 'specific') return category.layer;
+  const text = `${tag} ${category?.description ?? ''}`.toLowerCase();
+  if (/\b(cnc|indu|electrician|person|aayega|ayega|comes|spot|shop|store|doctor|gajnan|prakash)\b/.test(text)) {
+    return 'specific';
+  }
+  if (/\b(katni|jbp|jabalpur|city|nagar|madhav|gpc|area|location|locality)\b/.test(text)) {
+    return 'generic';
+  }
+  return 'specific';
+}
+
 function appendTeachingIntentToRules(source: string, intent: TeachIntent, taskTitle: string, rawInstruction: string) {
   const cleanTitle = taskTitle.trim();
   const cleanTags = Array.from(new Set(intent.taskTags.map((tag) => tag.trim()).filter(Boolean)));
@@ -169,7 +181,7 @@ function TaskRow({
           </div>
         ) : null}
         {todo.ashiTaskJson ? (
-          <span className={`ashi-category-chip${todo.ashiTaskJson.moveToNextDay ? '' : ' is-warn'}`}>
+          <span className={`ashi-category-chip${todo.ashiTaskJson.moveToNextDay ? ' is-move' : ' is-warn'}`}>
             {todo.ashiTaskJson.moveToNextDay ? 'Move next day' : 'Do not auto move'}
           </span>
         ) : null}
@@ -338,6 +350,17 @@ export function AshiPage() {
 
   // All unique tag names from all tasks
   const allTags = useMemo(() => getAllTags(tasks), [tasks]);
+  const tagsByLayer = useMemo(() => {
+    const categoryByName = new Map(categories.map((category) => [normalizeTagName(category.name), category]));
+    return allTags.reduce(
+      (groups, tag) => {
+        const layer = inferTagLayer(tag, categoryByName.get(normalizeTagName(tag)));
+        groups[layer].push(tag);
+        return groups;
+      },
+      { generic: [] as string[], specific: [] as string[] },
+    );
+  }, [allTags, categories]);
 
   // Tasks filtered by active tag
   const filteredTasks = useMemo(() => filterByTag(tasks, activeTag), [tasks, activeTag]);
@@ -750,6 +773,19 @@ export function AshiPage() {
     }
   }
 
+  function renderTagPill(tag: string) {
+    return (
+      <button
+        key={tag}
+        type="button"
+        className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
+        onClick={() => setActiveTag(tag)}
+      >
+        {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
+      </button>
+    );
+  }
+
   function renderTaskRow(todo: TodoItem) {
     return (
       <TaskRow
@@ -877,16 +913,14 @@ export function AshiPage() {
                 Untagged <span className="ashi-tag-pill-count">{untaggedCount}</span>
               </button>
             )}
-            {allTags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                className={`ashi-tag-pill${activeTag === tag ? ' is-active' : ''}`}
-                onClick={() => setActiveTag(tag)}
-              >
-                {tag} <span className="ashi-tag-pill-count">{tagCounts[tag] ?? 0}</span>
-              </button>
-            ))}
+          </div>
+          <div className="ashi-tag-layer">
+            <span className="ashi-tag-layer-label">Generic</span>
+            <div className="ashi-tag-filter-bar">{tagsByLayer.generic.map(renderTagPill)}</div>
+          </div>
+          <div className="ashi-tag-layer">
+            <span className="ashi-tag-layer-label">Specific spots / people</span>
+            <div className="ashi-tag-filter-bar">{tagsByLayer.specific.map(renderTagPill)}</div>
           </div>
           {/* Tag management: rename/remove */}
           {activeTag && activeTag !== '__untagged__' && categories.find((c) => c.name === activeTag) ? (

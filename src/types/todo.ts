@@ -54,11 +54,13 @@ export interface SortOption {
 }
 
 export type SortMap = Record<TimeBucket, SortOption>;
+export type AshiCategoryLayer = 'generic' | 'specific';
 
 export interface AshiCategory {
   id: string;
   name: string;
   description?: string;
+  layer?: AshiCategoryLayer;
   createdAt: string;
 }
 
@@ -102,11 +104,11 @@ Use "move_next_day" when the task is still actionable today and should remain vi
 Use "undone" when it should stay as an overdue unfinished task for review instead of being carried forward automatically.`;
 
 const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
-  { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', description: 'Tasks to do when Indu comes.', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', description: 'Shopping or errands for CNC.', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-katni-city-jaayenge', name: 'Jub Katni city jaayenge', description: 'Tasks to do in Katni city.', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-jbp-jaayenge', name: 'Jub JBP jaayenge', description: 'Tasks to do in Jabalpur.', createdAt: new Date(0).toISOString() },
-  { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', description: 'Electrical work when electrician comes.', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', description: 'Tasks to do when Indu comes.', layer: 'specific', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', description: 'Shopping or errands for CNC.', layer: 'specific', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-katni-city-jaayenge', name: 'Jub Katni city jaayenge', description: 'Tasks to do in Katni city.', layer: 'generic', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-jbp-jaayenge', name: 'Jub JBP jaayenge', description: 'Tasks to do in Jabalpur.', layer: 'generic', createdAt: new Date(0).toISOString() },
+  { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', description: 'Electrical work when electrician comes.', layer: 'specific', createdAt: new Date(0).toISOString() },
 ];
 
 export const DEFAULT_STORE: TodoStore = {
@@ -239,11 +241,13 @@ function normalizeAshiCategory(raw: unknown): AshiCategory | null {
   const data = raw as Partial<AshiCategory>;
   const id = cleanText(data.id);
   const name = cleanText(data.name);
+  const layer = data.layer === 'generic' || data.layer === 'specific' ? data.layer : undefined;
   if (!id || !name) return null;
   return {
     id,
     name,
     description: cleanText(data.description) || undefined,
+    layer,
     createdAt: cleanText(data.createdAt) || new Date(0).toISOString(),
   };
 }

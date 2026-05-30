@@ -22,6 +22,7 @@ export type GeneratedCategory = {
   id: string;
   name: string;
   description?: string;
+  layer?: 'generic' | 'specific';
   createdAt: string;
 };
 
@@ -122,12 +123,28 @@ function cleanString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function cleanCategoryLayer(value: unknown): 'generic' | 'specific' | undefined {
+  return value === 'generic' || value === 'specific' ? value : undefined;
+}
+
 function categoryPayload(categories: AshiCategory[]) {
   return categories.map((category) => ({
     id: category.id,
     name: category.name,
     description: category.description,
+    layer: category.layer,
   }));
+}
+
+function inferCategoryLayer(name: string, description = ''): 'generic' | 'specific' {
+  const text = `${name} ${description}`.toLowerCase();
+  if (/\b(cnc|indu|electrician|person|aayega|ayega|comes|spot|shop|store|doctor|gajnan|prakash)\b/.test(text)) {
+    return 'specific';
+  }
+  if (/\b(katni|jbp|jabalpur|city|nagar|madhav|gpc|area|location|locality)\b/.test(text)) {
+    return 'generic';
+  }
+  return 'specific';
 }
 
 function matchCategoryId(taskCategory: string, categories: AshiCategory[]) {
@@ -235,13 +252,13 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Return {"categories":[{"name":"category name","description":"classification rule"}]}.',
+              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Also classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
             userText: cleanSource,
           }),
         },
       ],
       1200,
-    )) as { categories?: Array<{ name?: string; description?: string }> };
+    )) as { categories?: Array<{ name?: string; description?: string; layer?: string }> };
 
     const now = new Date().toISOString();
     const seen = new Set<string>();
@@ -249,6 +266,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
       .map((category) => ({
         name: cleanString(category.name),
         description: cleanString(category.description),
+        layer: cleanCategoryLayer(category.layer),
       }))
       .filter((category) => {
         const key = category.name.toLowerCase();
@@ -260,6 +278,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
         id: slugId(category.name),
         name: category.name,
         description: category.description || undefined,
+        layer: category.layer ?? inferCategoryLayer(category.name, category.description),
         createdAt: now,
       }));
   } catch {
@@ -274,6 +293,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           id: slugId(name),
           name: name.trim(),
           description: rest.join('-').trim() || line,
+          layer: inferCategoryLayer(name, rest.join('-')),
           createdAt: now,
         };
       });

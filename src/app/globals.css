@@ -2237,6 +2237,12 @@ label {
   color: #73560a !important;
 }
 
+.ashi-category-chip.is-move {
+  background: #e7f8ee;
+  color: #1e7a43 !important;
+  box-shadow: 0 2px 0 rgba(51, 159, 92, 0.32);
+}
+
 .ashi-task-actions {
   display: flex;
   gap: 0.4rem;
@@ -2352,6 +2358,20 @@ label {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+.ashi-tag-layer {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(239, 81, 64, 0.1);
+}
+
+.ashi-tag-layer-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .ashi-tag-pill {
