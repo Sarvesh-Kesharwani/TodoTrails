@@ -256,15 +256,17 @@ type TaskSectionProps = {
   items: TodoItem[];
   emptyText: string;
   renderTaskRow: (todo: TodoItem) => ReactNode;
+  controls?: ReactNode;
 };
 
-function TaskSection({ title, items, emptyText, renderTaskRow }: TaskSectionProps) {
+function TaskSection({ title, items, emptyText, renderTaskRow, controls }: TaskSectionProps) {
   return (
     <section className="ashi-task-section">
       <div className="ashi-task-section-head">
         <h3>{title}</h3>
         <span>{items.length}</span>
       </div>
+      {controls}
       {items.length === 0 ? <p className="ashi-empty">{emptyText}</p> : <div className="ashi-task-stack">{items.map(renderTaskRow)}</div>}
     </section>
   );
@@ -375,10 +377,16 @@ export function AshiPage() {
   const categories = store.ashiSettings.categories;
   const rulesPrompt =
     store.ashiSettings.rulesPrompt ?? store.ashiSettings.categoriesSource ?? store.ashiSettings.rolloverPrompt;
+  const todayTagFilter = store.ashiSettings.todayTagFilter ?? '';
   const todayKey = useMemo(() => localDateKey(today), [today]);
 
   // All unique tag names from all tasks
   const allTags = useMemo(() => getAllTags(tasks), [tasks]);
+  const todayTagOptions = useMemo(() => {
+    const tags = [...allTags];
+    if (todayTagFilter && !tags.includes(todayTagFilter)) tags.unshift(todayTagFilter);
+    return tags;
+  }, [allTags, todayTagFilter]);
   const tagsByLayer = useMemo(() => {
     const categoryByName = new Map(categories.map((category) => [normalizeTagName(category.name), category]));
     return allTags.reduce(
@@ -393,6 +401,7 @@ export function AshiPage() {
 
   // Tasks filtered by active tag
   const filteredTasks = useMemo(() => filterByTag(tasks, activeTag), [tasks, activeTag]);
+  const visibleTodayTasks = useMemo(() => filterByTag(todayTasks, todayTagFilter), [todayTasks, todayTagFilter]);
 
   // Count tasks per tag for the filter header
   const tagCounts = useMemo(() => {
@@ -668,6 +677,15 @@ export function AshiPage() {
     setStatus('Rules saved. Click AI organize to re-tag all tasks.');
   }
 
+  async function updateTodayTagFilter(tag: string) {
+    const now = new Date().toISOString();
+    await persist({
+      ...store,
+      ashiSettings: { ...store.ashiSettings, todayTagFilter: tag },
+      updatedAt: now,
+    });
+  }
+
   function startTeachTask(todo: TodoItem) {
     const currentTags = todo.ashiTags?.join(', ') ?? todo.ashiTaskJson?.taskCategory ?? '';
     setTeachingTodo(todo);
@@ -931,7 +949,25 @@ export function AshiPage() {
         <div className="ashi-list">
           <span className="ashi-list-title">Today</span>
           {tasks.length === 0 ? <p className="ashi-empty">No tasks yet - add one above.</p> : null}
-          <TaskSection title="Today's tasks" items={todayTasks} emptyText="No tasks due today." renderTaskRow={renderTaskRow} />
+          <TaskSection
+            title="Today's tasks"
+            items={visibleTodayTasks}
+            emptyText={todayTagFilter ? `No tasks due today tagged "${todayTagFilter}".` : 'No tasks due today.'}
+            renderTaskRow={renderTaskRow}
+            controls={
+              <label className="ashi-today-filter">
+                <span>Show tag</span>
+                <select value={todayTagFilter} onChange={(event) => void updateTodayTagFilter(event.target.value)}>
+                  <option value="">All today tasks</option>
+                  {todayTagOptions.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            }
+          />
         </div>
       </section>
 

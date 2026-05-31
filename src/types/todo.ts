@@ -78,6 +78,7 @@ export interface AshiSettings {
   rolloverPrompt: string;
   rolloverPromptUpdatedAt?: string;
   lastRolloverDate?: string;
+  todayTagFilter?: string;
 }
 
 export interface TodoStore {
@@ -130,6 +131,7 @@ export const DEFAULT_STORE: TodoStore = {
     categories: DEFAULT_ASHI_CATEGORIES,
     rulesPrompt: DEFAULT_ASHI_RULES_PROMPT,
     rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
+    todayTagFilter: '',
   },
   updatedAt: new Date(0).toISOString(),
 };
@@ -279,6 +281,7 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
     rolloverPrompt: cleanText(data.rolloverPrompt) || DEFAULT_ASHI_ROLLOVER_PROMPT,
     rolloverPromptUpdatedAt: cleanText(data.rolloverPromptUpdatedAt) || undefined,
     lastRolloverDate: cleanText(data.lastRolloverDate) || undefined,
+    todayTagFilter: cleanText(data.todayTagFilter) || '',
   };
 }
 
