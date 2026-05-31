@@ -1,5 +1,5 @@
 import { classifyTodos } from '@/lib/ashi-ai';
-import { normalizeStore, type AshiCategory, type TodoItem } from '@/types/todo';
+import { normalizeStore, type AshiCategory, type TodoItem, type TagRulesStore } from '@/types/todo';
 
 export const runtime = 'nodejs';
 
@@ -7,6 +7,7 @@ type ClassifyBody = {
   todos?: TodoItem[];
   categories?: AshiCategory[];
   rulesPrompt?: string;
+  tagRules?: TagRulesStore;
 };
 
 export async function POST(req: Request) {
@@ -17,7 +18,8 @@ export async function POST(req: Request) {
       ashiSettings: { categories: Array.isArray(body.categories) ? body.categories : [] },
     });
     const rulesPrompt = typeof body.rulesPrompt === 'string' ? body.rulesPrompt.trim() : '';
-    const assignments = await classifyTodos(store.todos, store.ashiSettings.categories, rulesPrompt);
+    const tagRules = body.tagRules;
+    const assignments = await classifyTodos(store.todos, store.ashiSettings.categories, rulesPrompt, tagRules);
     return Response.json({ assignments });
   } catch {
     return Response.json({ error: 'Invalid classify request.' }, { status: 400 });

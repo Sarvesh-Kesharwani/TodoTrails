@@ -1,6 +1,7 @@
 import 'server-only';
 
-import type { AshiCategory, TodoItem } from '@/types/todo';
+import type { AshiCategory, TodoItem, TagRulesStore } from '@/types/todo';
+import { getRelevantTagRules, buildAutoTagPrompt, getClosestExamples } from '@/lib/tag-rules';
 
 type DeepSeekMessage = {
   role: 'system' | 'user';
@@ -245,10 +246,48 @@ function expandAssignmentsWithHierarchy(
   });
 }
 
-export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[], rulesPrompt = ''): Promise<CategoryAssignment[]> {
+export async function classifyTodos(
+  todos: TodoItem[],
+  categories: AshiCategory[],
+  rulesPrompt = '',
+  tagRules?: TagRulesStore,
+): Promise<CategoryAssignment[]> {
   if (!todos.length || !categories.length) return [];
 
   try {
+    const hasTagRules = tagRules && Object.keys(tagRules.tags).length > 0;
+
+    const userContent = hasTagRules
+      ? (() => {
+          // Build a compact per-todo prompt using only relevant rules
+          const todoTexts = todos.map((todo) => `${todo.title} ${todo.notes ?? ''}`.trim());
+          const relevantRules: Record<string, unknown> = {};
+          const relevantHierarchy: Record<string, string[]> = {};
+
+          for (const todoText of todoTexts) {
+            const { rules, hierarchy } = getRelevantTagRules(todoText, tagRules!, categories);
+            Object.assign(relevantRules, rules);
+            Object.assign(relevantHierarchy, hierarchy);
+          }
+
+          return JSON.stringify({
+            instructions:
+              'For each todo, assign all relevant category tags from the provided list. Use the relevant_rules and relevant_hierarchy to decide tags. A task gets child-specific tags AND parent generic tags from hierarchy. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+            userRules: rulesPrompt,
+            categories: categoryPayload(categories),
+            todos: todos.map(compactTodo),
+            relevant_rules: relevantRules,
+            relevant_hierarchy: relevantHierarchy,
+          });
+        })()
+      : JSON.stringify({
+          instructions:
+            'For each todo, assign all relevant category tags from the provided list. Use the userRules text, especially any location hierarchy / parent tag rules, so a task can receive child specific tags and parent generic tags even when the parent keyword is not written in the task title. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+          userRules: rulesPrompt,
+          categories: categoryPayload(categories),
+          todos: todos.map(compactTodo),
+        });
+
     const json = (await deepSeekJson(
       [
         {
@@ -258,13 +297,7 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
         },
         {
           role: 'user',
-          content: JSON.stringify({
-            instructions:
-              'For each todo, assign all relevant category tags from the provided list. Use the userRules text, especially any location hierarchy / parent tag rules, so a task can receive child specific tags and parent generic tags even when the parent keyword is not written in the task title. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
-            userRules: rulesPrompt,
-            categories: categoryPayload(categories),
-            todos: todos.map(compactTodo),
-          }),
+          content: userContent,
         },
       ],
       Math.min(1800, Math.max(400, todos.length * 70)),

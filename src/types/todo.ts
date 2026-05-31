@@ -71,6 +71,19 @@ export interface AshiTaskJson {
   moveToNextDay: boolean;
 }
 
+export interface TagRule {
+  description: string;
+  triggers: string[];
+  parent_tags: string[];
+  move_default: 'yes' | 'no' | 'unclear';
+  examples: string[];
+}
+
+export interface TagRulesStore {
+  tags: Record<string, TagRule>;
+  hierarchy: Record<string, string[]>;
+}
+
 export interface AshiSettings {
   categories: AshiCategory[];
   rulesPrompt?: string;
@@ -79,6 +92,7 @@ export interface AshiSettings {
   rolloverPromptUpdatedAt?: string;
   lastRolloverDate?: string;
   todayTagFilter?: string;
+  tagRules?: TagRulesStore;
 }
 
 export interface TodoStore {
@@ -132,6 +146,7 @@ export const DEFAULT_STORE: TodoStore = {
     rulesPrompt: DEFAULT_ASHI_RULES_PROMPT,
     rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
     todayTagFilter: '',
+    tagRules: { tags: {}, hierarchy: {} },
   },
   updatedAt: new Date(0).toISOString(),
 };
@@ -260,6 +275,47 @@ function normalizeAshiCategory(raw: unknown): AshiCategory | null {
   };
 }
 
+function normalizeTagRulesStore(raw: unknown): TagRulesStore {
+  if (!raw || typeof raw !== 'object') return { tags: {}, hierarchy: {} };
+  const data = raw as Partial<TagRulesStore>;
+  const tags: Record<string, TagRule> = {};
+  if (data.tags && typeof data.tags === 'object') {
+    for (const [key, val] of Object.entries(data.tags)) {
+      if (!val || typeof val !== 'object') continue;
+      const rule = val as Partial<TagRule>;
+      const tagKey = key.trim().toLowerCase();
+      if (!tagKey) continue;
+      tags[tagKey] = {
+        description: cleanText(rule.description),
+        triggers: Array.isArray(rule.triggers)
+          ? rule.triggers.map((t) => cleanText(t).toLowerCase()).filter(Boolean).slice(0, 15)
+          : [],
+        parent_tags: Array.isArray(rule.parent_tags)
+          ? rule.parent_tags.map((t) => cleanText(t).toLowerCase()).filter(Boolean)
+          : [],
+        move_default: rule.move_default === 'yes' || rule.move_default === 'no' || rule.move_default === 'unclear'
+          ? rule.move_default
+          : 'unclear',
+        examples: Array.isArray(rule.examples)
+          ? rule.examples.map((e) => cleanText(e)).filter(Boolean).slice(0, 5)
+          : [],
+      };
+    }
+  }
+  const hierarchy: Record<string, string[]> = {};
+  if (data.hierarchy && typeof data.hierarchy === 'object') {
+    for (const [key, val] of Object.entries(data.hierarchy)) {
+      const childKey = key.trim().toLowerCase();
+      if (!childKey) continue;
+      const parents = Array.isArray(val)
+        ? val.map((p) => cleanText(p).toLowerCase()).filter(Boolean)
+        : [];
+      if (parents.length) hierarchy[childKey] = parents;
+    }
+  }
+  return { tags, hierarchy };
+}
+
 function normalizeAshiSettings(raw: unknown): AshiSettings {
   const data = raw && typeof raw === 'object' ? (raw as Partial<AshiSettings>) : {};
   const rawCategories = Array.isArray(data.categories) ? data.categories : null;
@@ -282,6 +338,7 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
     rolloverPromptUpdatedAt: cleanText(data.rolloverPromptUpdatedAt) || undefined,
     lastRolloverDate: cleanText(data.lastRolloverDate) || undefined,
     todayTagFilter: cleanText(data.todayTagFilter) || '',
+    tagRules: normalizeTagRulesStore(data.tagRules),
   };
 }
 
