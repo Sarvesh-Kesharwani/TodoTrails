@@ -1,12 +1,15 @@
 import 'server-only';
 
 import type { AshiCategory, TodoItem, TagRulesStore } from '@/types/todo';
-import { getRelevantTagRules, buildAutoTagPrompt, getClosestExamples } from '@/lib/tag-rules';
+import { getRelevantTagRules, getClosestExamples } from '@/lib/tag-rules';
 
 type DeepSeekMessage = {
   role: 'system' | 'user';
   content: string;
 };
+
+const AUTO_TAG_BASE_PROMPT =
+  'You are a todo auto-tagging assistant. Assign correct tags, use parent-child hierarchy, decide whether unfinished todo should move to next day, and return JSON only.';
 
 export type CategoryAssignment = {
   todoId: string;
@@ -246,6 +249,58 @@ function expandAssignmentsWithHierarchy(
   });
 }
 
+function findStoredRuleKey(tagName: string, tagRules: TagRulesStore) {
+  const cleanName = normalizeRuleKey(tagName);
+  return (
+    Object.keys(tagRules.tags).find((key) => normalizeRuleKey(key) === cleanName) ??
+    Object.keys(tagRules.hierarchy).find((key) => normalizeRuleKey(key) === cleanName)
+  );
+}
+
+function expandAssignmentsWithStoredRules(
+  assignments: CategoryAssignment[],
+  categories: AshiCategory[],
+  tagRules?: TagRulesStore,
+) {
+  if (!tagRules || (!Object.keys(tagRules.tags).length && !Object.keys(tagRules.hierarchy).length)) return assignments;
+
+  return assignments.map((assignment) => {
+    const names = new Set(assignment.taskTags);
+    const visited = new Set<string>();
+
+    const addParents = (ruleKey: string) => {
+      if (visited.has(ruleKey)) return;
+      visited.add(ruleKey);
+      const parentKeys = [
+        ...(tagRules.hierarchy[ruleKey] ?? []),
+        ...(tagRules.tags[ruleKey]?.parent_tags ?? []),
+      ];
+      for (const parentKey of parentKeys) {
+        const parent = resolveCategory(parentKey, categories);
+        if (parent) names.add(parent.name);
+        const storedParentKey = findStoredRuleKey(parentKey, tagRules);
+        if (storedParentKey) addParents(storedParentKey);
+      }
+    };
+
+    for (const tagName of assignment.taskTags) {
+      const ruleKey = findStoredRuleKey(tagName, tagRules);
+      if (ruleKey) addParents(ruleKey);
+    }
+
+    const resolvedCategories = Array.from(names)
+      .map((name) => resolveCategory(name, categories))
+      .filter((category): category is AshiCategory => Boolean(category));
+    const primary = resolvedCategories[0] ?? categories.find((category) => category.id === assignment.categoryId);
+    return {
+      ...assignment,
+      categoryId: primary?.id ?? assignment.categoryId,
+      taskCategory: primary?.name ?? assignment.taskCategory,
+      taskTags: resolvedCategories.map((category) => category.name),
+    };
+  });
+}
+
 export async function classifyTodos(
   todos: TodoItem[],
   categories: AshiCategory[],
@@ -259,28 +314,33 @@ export async function classifyTodos(
 
     const userContent = hasTagRules
       ? (() => {
-          // Build a compact per-todo prompt using only relevant rules
           const todoTexts = todos.map((todo) => `${todo.title} ${todo.notes ?? ''}`.trim());
           const relevantRules: Record<string, unknown> = {};
           const relevantHierarchy: Record<string, string[]> = {};
+          const relevantExamplesByTodo: Record<string, string[]> = {};
 
-          for (const todoText of todoTexts) {
+          for (let index = 0; index < todos.length; index++) {
+            const todo = todos[index];
+            const todoText = todoTexts[index];
             const { rules, hierarchy } = getRelevantTagRules(todoText, tagRules!, categories);
             Object.assign(relevantRules, rules);
             Object.assign(relevantHierarchy, hierarchy);
+            relevantExamplesByTodo[todo.id] = getClosestExamples(todoText, rules, 5);
           }
 
           return JSON.stringify({
+            basePrompt: AUTO_TAG_BASE_PROMPT,
             instructions:
-              'For each todo, assign all relevant category tags from the provided list. Use the relevant_rules and relevant_hierarchy to decide tags. A task gets child-specific tags AND parent generic tags from hierarchy. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
-            userRules: rulesPrompt,
+              'For each todo, assign all relevant category tags from the provided list. Use only relevant_rules, relevant_hierarchy, relevant_examples_by_todo, category names, and todo text. A task gets child-specific tags AND parent generic tags from hierarchy. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
             categories: categoryPayload(categories),
             todos: todos.map(compactTodo),
             relevant_rules: relevantRules,
             relevant_hierarchy: relevantHierarchy,
+            relevant_examples_by_todo: relevantExamplesByTodo,
           });
         })()
       : JSON.stringify({
+          basePrompt: AUTO_TAG_BASE_PROMPT,
           instructions:
             'For each todo, assign all relevant category tags from the provided list. Use the userRules text, especially any location hierarchy / parent tag rules, so a task can receive child specific tags and parent generic tags even when the parent keyword is not written in the task title. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
           userRules: rulesPrompt,
@@ -341,14 +401,15 @@ export async function classifyTodos(
       if (typeof raw.reason === 'string') assignment.reason = raw.reason.slice(0, 160);
       return assignment;
     });
-    return expandAssignmentsWithHierarchy(
+    const promptExpanded = expandAssignmentsWithHierarchy(
       parsed.filter((item): item is CategoryAssignment => Boolean(item)),
       todos,
       categories,
-      rulesPrompt,
+      hasTagRules ? '' : rulesPrompt,
     );
+    return expandAssignmentsWithStoredRules(promptExpanded, categories, tagRules);
   } catch {
-    return expandAssignmentsWithHierarchy(todos.map((todo) => {
+    const fallbackAssignments = expandAssignmentsWithHierarchy(todos.map((todo) => {
       const catId = fallbackCategory(todo, categories);
       const cat = categories.find((c) => c.id === catId) ?? categories[0];
       return {
@@ -361,7 +422,8 @@ export async function classifyTodos(
         confidence: 0,
         reason: 'Fallback category match.',
       };
-    }), todos, categories, rulesPrompt);
+    }), todos, categories, tagRules && Object.keys(tagRules.tags).length > 0 ? '' : rulesPrompt);
+    return expandAssignmentsWithStoredRules(fallbackAssignments, categories, tagRules);
   }
 }
 
@@ -381,7 +443,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Ignore section headings like "Location hierarchy / parent tags" and explanatory bullets like "Add rules like" or "Meaning". If a category line has explicit marker like [layer: generic] or [layer: specific], obey that marker exactly. Otherwise classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
+              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Ignore prompt instructions, section headings like "Base prompt", "Editable tag definitions", "Location hierarchy / parent tags", "Learning rules", and explanatory bullets like "Add rules like", "Meaning", "Do not append", or "Return JSON only". If a category line has explicit marker like [layer: generic] or [layer: specific], obey that marker exactly. Otherwise classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
             userText: cleanSource,
           }),
         },

@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem, TagRulesStore } from '@/types/todo';
+import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem } from '@/types/todo';
 import { endOfDay, parseDate, startOfLocalDay } from '@/lib/planner-date';
 import { uploadTodoAttachment } from '@/lib/attachments-client';
 import { useTodoStore } from './useTodoStore';
@@ -111,36 +111,6 @@ function buildTeachJson(tags: string[]) {
     null,
     2,
   );
-}
-
-function appendTeachingIntentToRules(source: string, intent: TeachIntent, taskTitle: string, rawInstruction: string) {
-  const cleanTitle = taskTitle.trim();
-  const cleanTags = Array.from(new Set(intent.taskTags.map((tag) => tag.trim()).filter(Boolean)));
-  if (!cleanTitle || !cleanTags.length) return source;
-
-  const nextDayText =
-    intent.moveToNextDay === null ? '' : `; move to next day: ${intent.moveToNextDay ? 'yes' : 'no'}`;
-  const noteText = intent.note ? `; note: ${intent.note}` : rawInstruction ? `; note: ${rawInstruction}` : '';
-  const exampleLine = `- Example task: ${cleanTitle}${nextDayText}${noteText}`;
-  let nextSource = source.trimEnd();
-
-  for (const categoryName of cleanTags) {
-    if (nextSource.toLowerCase().includes(`${categoryName.toLowerCase()}`) && nextSource.toLowerCase().includes(cleanTitle.toLowerCase())) {
-      continue;
-    }
-    const lines = nextSource.split(/\r?\n/);
-    const categoryKey = normalizeTagName(categoryName);
-    const categoryIndex = lines.findIndex((line) => normalizeTagName(line.replace(/[:\-].*$/, '')) === categoryKey);
-
-    if (categoryIndex >= 0) {
-      lines.splice(categoryIndex + 1, 0, exampleLine);
-      nextSource = lines.join('\n');
-    } else {
-      const prefix = nextSource.trim() ? `${nextSource}\n\n` : '';
-      nextSource = `${prefix}${categoryName}:\n${exampleLine}`;
-    }
-  }
-  return nextSource;
 }
 
 /** Get all unique tag names across all tasks (from ashiTags or ashiTaskJson.taskTags) */
@@ -254,7 +224,7 @@ function TaskRow({
               Cancel
             </button>
             <button type="button" className="btn-3d" onClick={onSubmitTeach} disabled={teachSubmitting || !teachDraft.trim()}>
-              {teachSubmitting ? 'Learning...' : 'Learn + re-tag'}
+              {teachSubmitting ? 'Saving...' : 'Save correction'}
             </button>
           </div>
         </div>
@@ -575,6 +545,28 @@ export function AshiPage() {
     };
   }
 
+  function categoriesWithCorrectedTags(sourceCategories: AshiCategory[], tags: string[], note: string | undefined, createdAt: string) {
+    const nextCategories = [...sourceCategories];
+    for (const tag of tags) {
+      const cleanTag = tag.trim();
+      if (!cleanTag) continue;
+      const existing = nextCategories.find((category) => normalizeTagName(category.name) === normalizeTagName(cleanTag));
+      if (existing) continue;
+      nextCategories.push({
+        id: `ashi-cat-${cleanTag
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40) || 'tag'}-${uid()}`,
+        name: cleanTag,
+        description: note || `Tasks tagged as ${cleanTag}.`,
+        layer: inferTagLayer(cleanTag, undefined),
+        createdAt,
+      });
+    }
+    return nextCategories;
+  }
+
   async function parseTeachIntent(todo: TodoItem, instruction: string) {
     const response = await fetch('/api/ashi/teach', {
       method: 'POST',
@@ -715,53 +707,65 @@ export function AshiPage() {
     const instruction = teachDraft.trim();
     if (!todo || !instruction || teachSubmitting) return;
     setTeachSubmitting(true);
-    setClassifying(true);
     setStatus('');
     try {
       const intent = await parseTeachIntent(todo, instruction);
       if (!intent.taskTags.length) throw new Error('No category found in teach text.');
 
-      // 1. Update the todo's tags immediately
       const now = new Date().toISOString();
       const moveDecision: 'yes' | 'no' | 'unclear' =
         intent.moveToNextDay === true ? 'yes' : intent.moveToNextDay === false ? 'no' : 'unclear';
+      const nextCategories = categoriesWithCorrectedTags(categories, intent.taskTags, intent.note, now);
+      const taughtAssignment = assignmentFromTeach(todo, intent, nextCategories);
+      if (!taughtAssignment) throw new Error('No matching tag found after correction.');
 
-      // 2. Update tagRules from this correction
+      const correctedTodos = store.todos.map((item) =>
+        item.id === todo.id
+          ? {
+              ...item,
+              ashiCategoryId: taughtAssignment.categoryId,
+              ashiTags: taughtAssignment.taskTags,
+              ashiTaskJson: {
+                taskCategory: taughtAssignment.taskCategory,
+                taskTags: taughtAssignment.taskTags,
+                taskName: item.ashiTaskJson?.taskName || item.title,
+                moveToNextDay: taughtAssignment.moveToNextDay,
+              },
+              updatedAt: now,
+            }
+          : item,
+      );
+
+      const correctedStore = {
+        ...store,
+        todos: correctedTodos,
+        ashiSettings: {
+          ...store.ashiSettings,
+          categories: nextCategories,
+        },
+        updatedAt: now,
+      };
+
+      await persist(correctedStore);
+
       let tagRulesUpdateFailed = false;
-      const computedTagRules = compressTagRules(
+      const correctedTitle = todo.ashiTaskJson?.taskName || todo.title;
+      const learnedTagRules = compressTagRules(
         updateTagRulesFromCorrection(
           store.ashiSettings.tagRules || { tags: {}, hierarchy: {} },
-          todo.title,
-          intent.taskTags,
+          correctedTitle,
+          taughtAssignment.taskTags,
           moveDecision,
           intent.note,
         ),
       );
 
       try {
-        // Persist the todo update + tagRules immediately
-        const correctedTodos = store.todos.map((item) =>
-          item.id === todo.id
-            ? {
-                ...item,
-                ashiTags: intent.taskTags,
-                ashiTaskJson: {
-                  taskCategory: intent.taskTags[0] || item.title,
-                  taskTags: intent.taskTags,
-                  taskName: item.ashiTaskJson?.taskName || item.title,
-                  moveToNextDay: intent.moveToNextDay ?? item.ashiTaskJson?.moveToNextDay ?? true,
-                },
-                updatedAt: now,
-              }
-            : item,
-        );
-
         await persist({
-          ...store,
-          todos: correctedTodos,
+          ...correctedStore,
           ashiSettings: {
-            ...store.ashiSettings,
-            tagRules: computedTagRules,
+            ...correctedStore.ashiSettings,
+            tagRules: learnedTagRules,
           },
           updatedAt: now,
         });
@@ -769,51 +773,18 @@ export function AshiPage() {
         tagRulesUpdateFailed = true;
       }
 
-      // 3. Continue with the full rules prompt update + re-classification (existing flow)
-      const nextRules = appendTeachingIntentToRules(rulesPrompt, intent, todo.title, instruction);
-      const nextCategories = await generateCategoriesFromRules(nextRules);
-      const assignments = await classifyWithDeepSeek(tasks, nextCategories);
-      const taughtAssignment = assignmentFromTeach(todo, intent, nextCategories);
-      const assignmentMap = new Map(assignments.map((assignment) => [assignment.todoId, assignment]));
-      if (taughtAssignment) assignmentMap.set(todo.id, taughtAssignment);
-
-      const reclassifyNow = new Date().toISOString();
-      const activeIds = new Set(tasks.map((item) => item.id));
-      const clearedTodos = store.todos.map((item) =>
-        activeIds.has(item.id)
-          ? { ...item, ashiCategoryId: undefined, ashiTags: undefined, ashiTaskJson: undefined, updatedAt: reclassifyNow }
-          : item,
-      );
-
-      await persist({
-        ...store,
-        todos: applyAssignments(clearedTodos, Array.from(assignmentMap.values()), reclassifyNow),
-        ashiSettings: {
-          ...store.ashiSettings,
-          categories: nextCategories,
-          rulesPrompt: nextRules,
-          categoriesSource: nextRules,
-          rolloverPrompt: nextRules,
-          rolloverPromptUpdatedAt: reclassifyNow,
-          // Preserve tagRules if first persist updated them; store capture may be stale
-          tagRules: tagRulesUpdateFailed
-            ? (store.ashiSettings.tagRules || { tags: {}, hierarchy: {} })
-            : store.ashiSettings.tagRules,
-        },
-        updatedAt: reclassifyNow,
-      });
-
-      setRulesDraft(nextRules);
       setTeachingTodo(null);
       setTeachDraft('');
       setActiveTag('');
-      const warningMsg = tagRulesUpdateFailed ? ' (rule learning update failed, but tags saved)' : '';
-      setStatus(`Learned "${todo.title}" and re-tagged ${assignmentMap.size} task${assignmentMap.size === 1 ? '' : 's'}.${warningMsg}`);
+      setStatus(
+        tagRulesUpdateFailed
+          ? 'Todo updated, but learning rule update failed.'
+          : `Updated "${todo.title}" with tags: ${taughtAssignment.taskTags.join(', ')}. Rule learned.`,
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Teach failed.');
     } finally {
       setTeachSubmitting(false);
-      setClassifying(false);
     }
   }
 

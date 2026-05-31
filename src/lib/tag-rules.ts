@@ -42,16 +42,6 @@ function dedupeArray(items: string[], max: number): string[] {
   return result;
 }
 
-function matchScore(todoText: string, triggers: string[]): number {
-  const text = normalizeRuleKey(todoText);
-  let score = 0;
-  for (const trigger of triggers) {
-    const key = normalizeRuleKey(trigger);
-    if (text.includes(key)) score += 1;
-  }
-  return score;
-}
-
 /**
  * Retrieves only relevant tag rules for a given todo text.
  * Matches against triggers and tag names, returns matched rules + hierarchy.

@@ -126,11 +126,30 @@ const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
   { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', description: 'Electrical work when electrician comes.', layer: 'specific', createdAt: new Date(0).toISOString() },
 ];
 
-const DEFAULT_ASHI_RULES_PROMPT = `${DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n\n')}
+const LEGACY_ASHI_RULES_PROMPT = `${DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n\n')}
 
 Location hierarchy / parent tags:
 - Add rules like: jilharighaat -> jbp
 - Meaning: if a task belongs to jilharighaat, also tag it with jbp even when jbp is not written in the task title.`;
+
+const DEFAULT_ASHI_RULES_PROMPT = `Base prompt:
+You are a todo auto-tagging assistant.
+Assign the most relevant user-defined tags.
+Use parent tags from the hierarchy.
+Decide whether an unfinished task should move to next day.
+Return JSON only.
+
+Editable tag definitions:
+${DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: [layer: ${category.layer ?? 'specific'}] ${category.description ?? ''}`).join('\n\n')}
+
+Location hierarchy / parent tags:
+- child_tag -> parent_tag
+- If a task belongs to a child tag, also include every parent tag.
+
+Learning rules:
+- Corrections update compact Tag Rules JSON, not this prompt.
+- Do not append full historical examples here.
+- Keep this prompt small: only stable tag meanings, layer markers, and hierarchy rules.`;
 
 export const DEFAULT_STORE: TodoStore = {
   todos: [],
@@ -327,9 +346,10 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
     cleanText(data.categoriesSource) ||
     cleanText(data.rolloverPrompt) ||
     DEFAULT_ASHI_RULES_PROMPT;
-  const rulesPrompt = /location hierarchy|parent tags/i.test(rawRulesPrompt)
-    ? rawRulesPrompt
-    : `${rawRulesPrompt.trim()}\n\nLocation hierarchy / parent tags:\n- Add rules like: jilharighaat -> jbp\n- Meaning: if a task belongs to jilharighaat, also tag it with jbp even when jbp is not written in the task title.`;
+  const migratedRulesPrompt = rawRulesPrompt === LEGACY_ASHI_RULES_PROMPT ? DEFAULT_ASHI_RULES_PROMPT : rawRulesPrompt;
+  const rulesPrompt = /location hierarchy|parent tags/i.test(migratedRulesPrompt)
+    ? migratedRulesPrompt
+    : `${migratedRulesPrompt.trim()}\n\nLocation hierarchy / parent tags:\n- child_tag -> parent_tag\n- If a task belongs to a child tag, also include every parent tag.`;
   return {
     categories,
     rulesPrompt,
