@@ -58,6 +58,7 @@ export function getRelevantTagRules(
 
   // Match against triggers and tag key names
   for (const [tagKey, rule] of Object.entries(tagRules.tags)) {
+    if (rule.active === false) continue;
     const triggers = [tagKey, ...rule.triggers];
     const matched = triggers.some((trigger) => text.includes(normalizeRuleKey(trigger)));
     if (matched) {
@@ -68,6 +69,7 @@ export function getRelevantTagRules(
   // Also match against category names
   if (categories) {
     for (const category of categories) {
+      if (category.disabled) continue;
       const catKey = normalizeRuleKey(category.name);
       if (text.includes(catKey) && !matchedTagKeys.includes(catKey)) {
         const existsInRules = tagRules.tags[catKey];
@@ -90,6 +92,7 @@ export function getRelevantTagRules(
     visited.add(tagKey);
     const rule = tagRules.tags[tagKey];
     if (rule) {
+      if (rule.active === false) return;
       relevantRules[tagKey] = rule;
       // Add parent hierarchy
       if (tagRules.hierarchy[tagKey]) {
@@ -146,6 +149,8 @@ export function updateTagRulesFromCorrection(
         examples: newExamples,
         move_default: moveDecision !== 'unclear' ? moveDecision : existing.move_default,
         description: note ? note : existing.description,
+        active: existing.active === false ? false : true,
+        priority: existing.priority ?? 0,
       };
     } else {
       // Create new rule
@@ -155,6 +160,8 @@ export function updateTagRulesFromCorrection(
         parent_tags: [],
         move_default: moveDecision,
         examples: [cleanTodo],
+        priority: 0,
+        active: true,
       };
     }
   }
@@ -219,6 +226,8 @@ export function compressTagRules(tagRules: TagRulesStore): TagRulesStore {
       ...rule,
       triggers: compactTriggers,
       examples: usefulExamples,
+      priority: rule.priority ?? 0,
+      active: rule.active === false ? false : true,
     };
   }
 
@@ -232,13 +241,13 @@ export function buildAutoTagPrompt(
   todoText: string,
   relevantRules: Record<string, TagRule>,
   relevantHierarchy: Record<string, string[]>,
+  basePrompt = 'You are a todo auto-tagging assistant. Assign the most relevant tags. Use parent tags from hierarchy. Decide whether it should move to next day. Return JSON only.',
 ): string {
   const rulesJson = JSON.stringify(relevantRules);
   const hierarchyJson = JSON.stringify(relevantHierarchy);
 
   return JSON.stringify({
-    instructions:
-      'Assign the most relevant tags to the todo. Use parent tags from hierarchy. Decide whether it should move to next day. Return JSON only.',
+    basePrompt,
     todo: todoText,
     relevant_rules: JSON.parse(rulesJson),
     relevant_hierarchy: JSON.parse(hierarchyJson),

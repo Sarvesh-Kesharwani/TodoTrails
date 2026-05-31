@@ -1,15 +1,12 @@
 import 'server-only';
 
-import type { AshiCategory, TodoItem, TagRulesStore } from '@/types/todo';
+import { DEFAULT_ASHI_BASE_PROMPT, type AshiCategory, type TodoItem, type TagRulesStore } from '@/types/todo';
 import { getRelevantTagRules, getClosestExamples } from '@/lib/tag-rules';
 
 type DeepSeekMessage = {
   role: 'system' | 'user';
   content: string;
 };
-
-const AUTO_TAG_BASE_PROMPT =
-  'You are a todo auto-tagging assistant. Assign correct tags, use parent-child hierarchy, decide whether unfinished todo should move to next day, and return JSON only.';
 
 export type CategoryAssignment = {
   todoId: string;
@@ -132,7 +129,7 @@ function cleanCategoryLayer(value: unknown): 'generic' | 'specific' | undefined 
 }
 
 function categoryPayload(categories: AshiCategory[]) {
-  return categories.map((category) => ({
+  return categories.filter((category) => !category.disabled).map((category) => ({
     id: category.id,
     name: category.name,
     description: category.description,
@@ -306,8 +303,10 @@ export async function classifyTodos(
   categories: AshiCategory[],
   rulesPrompt = '',
   tagRules?: TagRulesStore,
+  basePrompt = DEFAULT_ASHI_BASE_PROMPT,
 ): Promise<CategoryAssignment[]> {
-  if (!todos.length || !categories.length) return [];
+  const activeCategories = categories.filter((category) => !category.disabled);
+  if (!todos.length || !activeCategories.length) return [];
 
   try {
     const hasTagRules = tagRules && Object.keys(tagRules.tags).length > 0;
@@ -322,17 +321,17 @@ export async function classifyTodos(
           for (let index = 0; index < todos.length; index++) {
             const todo = todos[index];
             const todoText = todoTexts[index];
-            const { rules, hierarchy } = getRelevantTagRules(todoText, tagRules!, categories);
+            const { rules, hierarchy } = getRelevantTagRules(todoText, tagRules!, activeCategories);
             Object.assign(relevantRules, rules);
             Object.assign(relevantHierarchy, hierarchy);
             relevantExamplesByTodo[todo.id] = getClosestExamples(todoText, rules, 5);
           }
 
           return JSON.stringify({
-            basePrompt: AUTO_TAG_BASE_PROMPT,
+            basePrompt,
             instructions:
               'For each todo, assign all relevant category tags from the provided list. Use only relevant_rules, relevant_hierarchy, relevant_examples_by_todo, category names, and todo text. A task gets child-specific tags AND parent generic tags from hierarchy. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
-            categories: categoryPayload(categories),
+            categories: categoryPayload(activeCategories),
             todos: todos.map(compactTodo),
             relevant_rules: relevantRules,
             relevant_hierarchy: relevantHierarchy,
@@ -340,11 +339,11 @@ export async function classifyTodos(
           });
         })()
       : JSON.stringify({
-          basePrompt: AUTO_TAG_BASE_PROMPT,
+          basePrompt,
           instructions:
             'For each todo, assign all relevant category tags from the provided list. Use the userRules text, especially any location hierarchy / parent tag rules, so a task can receive child specific tags and parent generic tags even when the parent keyword is not written in the task title. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
           userRules: rulesPrompt,
-          categories: categoryPayload(categories),
+          categories: categoryPayload(activeCategories),
           todos: todos.map(compactTodo),
         });
 
@@ -379,8 +378,8 @@ export async function classifyTodos(
       // Resolve tag names to category ids; keep only valid ones
       const resolvedTags = rawTags
         .map((tagName) => {
-          const catId = matchCategoryId(tagName, categories);
-          return catId ? categories.find((c) => c.id === catId) : undefined;
+          const catId = matchCategoryId(tagName, activeCategories);
+          return catId ? activeCategories.find((c) => c.id === catId) : undefined;
         })
         .filter((c): c is AshiCategory => Boolean(c));
 
@@ -404,14 +403,14 @@ export async function classifyTodos(
     const promptExpanded = expandAssignmentsWithHierarchy(
       parsed.filter((item): item is CategoryAssignment => Boolean(item)),
       todos,
-      categories,
+      activeCategories,
       hasTagRules ? '' : rulesPrompt,
     );
-    return expandAssignmentsWithStoredRules(promptExpanded, categories, tagRules);
+    return expandAssignmentsWithStoredRules(promptExpanded, activeCategories, tagRules);
   } catch {
     const fallbackAssignments = expandAssignmentsWithHierarchy(todos.map((todo) => {
-      const catId = fallbackCategory(todo, categories);
-      const cat = categories.find((c) => c.id === catId) ?? categories[0];
+      const catId = fallbackCategory(todo, activeCategories);
+      const cat = activeCategories.find((c) => c.id === catId) ?? activeCategories[0];
       return {
         todoId: todo.id,
         categoryId: catId,
@@ -422,8 +421,8 @@ export async function classifyTodos(
         confidence: 0,
         reason: 'Fallback category match.',
       };
-    }), todos, categories, tagRules && Object.keys(tagRules.tags).length > 0 ? '' : rulesPrompt);
-    return expandAssignmentsWithStoredRules(fallbackAssignments, categories, tagRules);
+    }), todos, activeCategories, tagRules && Object.keys(tagRules.tags).length > 0 ? '' : rulesPrompt);
+    return expandAssignmentsWithStoredRules(fallbackAssignments, activeCategories, tagRules);
   }
 }
 

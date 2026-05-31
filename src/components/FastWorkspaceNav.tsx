@@ -20,7 +20,7 @@ function viewFromLocation(): WorkspaceView {
   const tab = params.get('tab');
   if (tab === 'ashi' || tab === 'board' || tab === 'settings' || tab === 'today' || tab === 'week' || tab === 'month') return tab;
   if (window.location.pathname === '/board') return 'board';
-  if (window.location.pathname === '/settings') return 'settings';
+  if (window.location.pathname.startsWith('/settings')) return 'settings';
   return 'today';
 }
 

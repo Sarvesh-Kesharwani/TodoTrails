@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import type { CompletionHistoryEntry, Dimension, SortOption, TodoItem } from '@/types/todo';
 import { useTodoStore } from './useTodoStore';
 
@@ -143,6 +144,9 @@ export function BoardSettingsPage() {
             <h1 className="settings-title">Board Settings</h1>
           </div>
           <span className="section-chip">Manage dimensions and archive</span>
+        </div>
+        <div className="settings-shortcuts">
+          <Link href="/settings/auto-tagging" className="btn-3d">Auto-tagging settings</Link>
         </div>
 
         <div className="settings-grid">

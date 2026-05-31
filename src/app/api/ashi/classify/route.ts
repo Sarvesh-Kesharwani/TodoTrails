@@ -8,6 +8,7 @@ type ClassifyBody = {
   categories?: AshiCategory[];
   rulesPrompt?: string;
   tagRules?: TagRulesStore;
+  basePrompt?: string;
 };
 
 export async function POST(req: Request) {
@@ -19,7 +20,8 @@ export async function POST(req: Request) {
     });
     const rulesPrompt = typeof body.rulesPrompt === 'string' ? body.rulesPrompt.trim() : '';
     const tagRules = body.tagRules;
-    const assignments = await classifyTodos(store.todos, store.ashiSettings.categories, rulesPrompt, tagRules);
+    const basePrompt = typeof body.basePrompt === 'string' ? body.basePrompt.trim() : undefined;
+    const assignments = await classifyTodos(store.todos, store.ashiSettings.categories, rulesPrompt, tagRules, basePrompt);
     return Response.json({ assignments });
   } catch {
     return Response.json({ error: 'Invalid classify request.' }, { status: 400 });

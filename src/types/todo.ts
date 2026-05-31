@@ -61,6 +61,7 @@ export interface AshiCategory {
   name: string;
   description?: string;
   layer?: AshiCategoryLayer;
+  disabled?: boolean;
   createdAt: string;
 }
 
@@ -77,6 +78,8 @@ export interface TagRule {
   parent_tags: string[];
   move_default: 'yes' | 'no' | 'unclear';
   examples: string[];
+  priority?: number;
+  active?: boolean;
 }
 
 export interface TagRulesStore {
@@ -86,6 +89,7 @@ export interface TagRulesStore {
 
 export interface AshiSettings {
   categories: AshiCategory[];
+  basePrompt?: string;
   rulesPrompt?: string;
   categoriesSource?: string;
   rolloverPrompt: string;
@@ -118,6 +122,12 @@ export const DEFAULT_ASHI_ROLLOVER_PROMPT = `Decide what to do with each unfinis
 Use "move_next_day" when the task is still actionable today and should remain visible in today's list.
 Use "undone" when it should stay as an overdue unfinished task for review instead of being carried forward automatically.`;
 
+export const DEFAULT_ASHI_BASE_PROMPT = `You are a todo auto-tagging assistant.
+Assign the most relevant user-defined tags.
+Use parent tags from the hierarchy.
+Decide whether an unfinished task should move to next day.
+Return JSON only.`;
+
 const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
   { id: 'ashi-cat-indu-aayega', name: 'Jub Indu aayega', description: 'Tasks to do when Indu comes.', layer: 'specific', createdAt: new Date(0).toISOString() },
   { id: 'ashi-cat-cnc-jaayenge', name: 'Jub CNC jaayenge', description: 'Shopping or errands for CNC.', layer: 'specific', createdAt: new Date(0).toISOString() },
@@ -133,11 +143,7 @@ Location hierarchy / parent tags:
 - Meaning: if a task belongs to jilharighaat, also tag it with jbp even when jbp is not written in the task title.`;
 
 const DEFAULT_ASHI_RULES_PROMPT = `Base prompt:
-You are a todo auto-tagging assistant.
-Assign the most relevant user-defined tags.
-Use parent tags from the hierarchy.
-Decide whether an unfinished task should move to next day.
-Return JSON only.
+${DEFAULT_ASHI_BASE_PROMPT}
 
 Editable tag definitions:
 ${DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: [layer: ${category.layer ?? 'specific'}] ${category.description ?? ''}`).join('\n\n')}
@@ -162,6 +168,7 @@ export const DEFAULT_STORE: TodoStore = {
   completionHistory: [],
   ashiSettings: {
     categories: DEFAULT_ASHI_CATEGORIES,
+    basePrompt: DEFAULT_ASHI_BASE_PROMPT,
     rulesPrompt: DEFAULT_ASHI_RULES_PROMPT,
     rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
     todayTagFilter: '',
@@ -290,6 +297,7 @@ function normalizeAshiCategory(raw: unknown): AshiCategory | null {
     name,
     description: cleanText(data.description) || undefined,
     layer,
+    disabled: Boolean(data.disabled),
     createdAt: cleanText(data.createdAt) || new Date(0).toISOString(),
   };
 }
@@ -318,6 +326,8 @@ function normalizeTagRulesStore(raw: unknown): TagRulesStore {
         examples: Array.isArray(rule.examples)
           ? rule.examples.map((e) => cleanText(e)).filter(Boolean).slice(0, 5)
           : [],
+        priority: Number.isFinite(Number(rule.priority)) ? Number(rule.priority) : 0,
+        active: rule.active === false ? false : true,
       };
     }
   }
@@ -352,6 +362,7 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
     : `${migratedRulesPrompt.trim()}\n\nLocation hierarchy / parent tags:\n- child_tag -> parent_tag\n- If a task belongs to a child tag, also include every parent tag.`;
   return {
     categories,
+    basePrompt: cleanText(data.basePrompt) || DEFAULT_ASHI_BASE_PROMPT,
     rulesPrompt,
     categoriesSource: cleanText(data.categoriesSource) || undefined,
     rolloverPrompt: cleanText(data.rolloverPrompt) || DEFAULT_ASHI_ROLLOVER_PROMPT,

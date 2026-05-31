@@ -508,6 +508,7 @@ export function AshiPage() {
         categories: sourceCategories,
         rulesPrompt,
         tagRules: store.ashiSettings.tagRules,
+        basePrompt: store.ashiSettings.basePrompt,
       }),
     });
     const data = (await response.json()) as { assignments?: CategoryAssignment[] };
@@ -792,28 +793,32 @@ export function AshiPage() {
       await persist(correctedStore);
 
       let tagRulesUpdateFailed = false;
-      const correctedTitle = todo.ashiTaskJson?.taskName || todo.title;
-      const learnedTagRules = compressTagRules(
-        updateTagRulesFromCorrection(
-          store.ashiSettings.tagRules || { tags: {}, hierarchy: {} },
-          correctedTitle,
-          taughtAssignment.taskTags,
-          moveDecision,
-          intent.note,
-        ),
-      );
+      let learned = false;
+      if (window.confirm('Use this correction to improve future tagging?')) {
+        const correctedTitle = todo.ashiTaskJson?.taskName || todo.title;
+        const learnedTagRules = compressTagRules(
+          updateTagRulesFromCorrection(
+            store.ashiSettings.tagRules || { tags: {}, hierarchy: {} },
+            correctedTitle,
+            taughtAssignment.taskTags,
+            moveDecision,
+            intent.note,
+          ),
+        );
 
-      try {
-        await persist({
-          ...correctedStore,
-          ashiSettings: {
-            ...correctedStore.ashiSettings,
-            tagRules: learnedTagRules,
-          },
-          updatedAt: now,
-        });
-      } catch {
-        tagRulesUpdateFailed = true;
+        try {
+          await persist({
+            ...correctedStore,
+            ashiSettings: {
+              ...correctedStore.ashiSettings,
+              tagRules: learnedTagRules,
+            },
+            updatedAt: now,
+          });
+          learned = true;
+        } catch {
+          tagRulesUpdateFailed = true;
+        }
       }
 
       setTeachingTodo(null);
@@ -822,7 +827,7 @@ export function AshiPage() {
       setStatus(
         tagRulesUpdateFailed
           ? 'Todo updated, but learning rule update failed.'
-          : `Updated "${todo.title}" with tags: ${taughtAssignment.taskTags.join(', ')}. Rule learned.`,
+          : `Updated "${todo.title}" with tags: ${taughtAssignment.taskTags.join(', ')}.${learned ? ' Rule learned.' : ''}`,
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Teach failed.');
