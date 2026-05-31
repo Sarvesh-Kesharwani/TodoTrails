@@ -407,6 +407,30 @@ export async function interpretTeachInstruction(
   if (!cleanInstruction) return { taskTags: [], moveToNextDay: null };
 
   try {
+    const parsed = JSON.parse(cleanInstruction) as Record<string, unknown>;
+    const rawTags = parsed['Put this task in'] ?? parsed.taskTags ?? parsed.tags;
+    const taskTags = Array.isArray(rawTags)
+      ? rawTags.map((tag) => cleanString(tag)).filter(Boolean)
+      : cleanString(rawTags)
+        ? splitRuleTags(cleanString(rawTags))
+        : [];
+    const rawMove = parsed['This should move to next day if unfinished'] ?? parsed.moveToNextDay;
+    const moveText = cleanString(rawMove).toLowerCase();
+    const moveToNextDay =
+      typeof rawMove === 'boolean'
+        ? rawMove
+        : ['yes', 'y', 'true', 'move', 'move next day', 'kal', 'tomorrow'].includes(moveText)
+          ? true
+          : ['no', 'n', 'false', 'do not move', 'dont move', "don't move", 'nahi', 'nahin'].includes(moveText)
+            ? false
+            : null;
+    if (taskTags.length || moveToNextDay !== null) {
+      return { taskTags, moveToNextDay, note: cleanInstruction };
+    }
+  } catch {
+  }
+
+  try {
     const json = (await deepSeekJson(
       [
         {

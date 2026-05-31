@@ -101,6 +101,17 @@ function updateRulesTagLayer(source: string, category: AshiCategory, layer: Ashi
   return `${prefix}${category.name}: ${marker}${description ? ` ${description}` : ''}`;
 }
 
+function buildTeachJson(tags: string[]) {
+  return JSON.stringify(
+    {
+      'Put this task in': tags.length ? tags : ['call service', 'ghar'],
+      'This should move to next day if unfinished': 'yes or no',
+    },
+    null,
+    2,
+  );
+}
+
 function appendTeachingIntentToRules(source: string, intent: TeachIntent, taskTitle: string, rawInstruction: string) {
   const cleanTitle = taskTitle.trim();
   const cleanTags = Array.from(new Set(intent.taskTags.map((tag) => tag.trim()).filter(Boolean)));
@@ -235,7 +246,7 @@ function TaskRow({
           <textarea
             value={teachDraft}
             onChange={(event) => onTeachDraftChange(event.target.value)}
-            placeholder={`Put this task in madhav nagar gpc and jbp.\nThis should move to next day if unfinished.`}
+            placeholder={buildTeachJson([])}
           />
           <div className="ashi-rules-actions">
             <button type="button" className="btn-ghost" onClick={onCancelTeach} disabled={teachSubmitting}>
@@ -687,13 +698,9 @@ export function AshiPage() {
   }
 
   function startTeachTask(todo: TodoItem) {
-    const currentTags = todo.ashiTags?.join(', ') ?? todo.ashiTaskJson?.taskCategory ?? '';
+    const currentTags = todo.ashiTags ?? todo.ashiTaskJson?.taskTags ?? (todo.ashiTaskJson?.taskCategory ? [todo.ashiTaskJson.taskCategory] : []);
     setTeachingTodo(todo);
-    setTeachDraft(
-      currentTags
-        ? `Put this task in ${currentTags}.\nThis should move to next day if unfinished.`
-        : 'Put this task in madhav nagar gpc and jbp.\nThis should move to next day if unfinished.',
-    );
+    setTeachDraft(buildTeachJson(currentTags));
     setStatus('');
   }
 
