@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem } from '@/types/todo';
+import type { AshiCategory, AshiCategoryLayer, TodoAttachment, TodoItem, TagRulesStore } from '@/types/todo';
 import { endOfDay, parseDate, startOfLocalDay } from '@/lib/planner-date';
 import { uploadTodoAttachment } from '@/lib/attachments-client';
 import { useTodoStore } from './useTodoStore';
@@ -111,6 +111,22 @@ function buildTeachJson(tags: string[]) {
     null,
     2,
   );
+}
+
+function tagRulesJson(tagRules: TagRulesStore | undefined) {
+  return JSON.stringify(tagRules ?? { tags: {}, hierarchy: {} }, null, 2);
+}
+
+function parseTagRulesJson(source: string): TagRulesStore {
+  const parsed = JSON.parse(source) as Partial<TagRulesStore>;
+  if (!parsed || typeof parsed !== 'object') throw new Error('Tag rules must be a JSON object.');
+  if (!parsed.tags || typeof parsed.tags !== 'object' || Array.isArray(parsed.tags)) {
+    throw new Error('Tag rules need a "tags" object.');
+  }
+  if (!parsed.hierarchy || typeof parsed.hierarchy !== 'object' || Array.isArray(parsed.hierarchy)) {
+    throw new Error('Tag rules need a "hierarchy" object.');
+  }
+  return parsed as TagRulesStore;
 }
 
 /** Get all unique tag names across all tasks (from ashiTags or ashiTaskJson.taskTags) */
@@ -344,6 +360,8 @@ export function AshiPage() {
   const [classifying, setClassifying] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesDraft, setRulesDraft] = useState('');
+  const [tagRulesOpen, setTagRulesOpen] = useState(false);
+  const [tagRulesDraft, setTagRulesDraft] = useState('');
   const [teachingTodo, setTeachingTodo] = useState<TodoItem | null>(null);
   const [teachDraft, setTeachDraft] = useState('');
   const [teachSubmitting, setTeachSubmitting] = useState(false);
@@ -686,6 +704,31 @@ export function AshiPage() {
     setStatus('Rules saved. Click AI organize to re-tag all tasks.');
   }
 
+  async function saveTagRules() {
+    const draft = tagRulesDraft.trim();
+    if (!draft) {
+      setStatus('Tag rules JSON cannot be empty.');
+      return;
+    }
+    try {
+      const parsed = parseTagRulesJson(draft);
+      const now = new Date().toISOString();
+      await persist({
+        ...store,
+        ashiSettings: {
+          ...store.ashiSettings,
+          tagRules: parsed,
+        },
+        updatedAt: now,
+      });
+      setTagRulesDraft(tagRulesJson(parsed));
+      setTagRulesOpen(false);
+      setStatus('Tag rules saved. New auto-tagging uses matching triggers and hierarchy.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Invalid tag rules JSON.');
+    }
+  }
+
   async function updateTodayTagFilter(tag: string) {
     const now = new Date().toISOString();
     await persist({
@@ -1025,9 +1068,21 @@ export function AshiPage() {
               onClick={() => {
                 setRulesDraft(rulesPrompt);
                 setRulesOpen((open) => !open);
+                setTagRulesOpen(false);
               }}
             >
               Rules
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setTagRulesDraft(tagRulesJson(store.ashiSettings.tagRules));
+                setTagRulesOpen((open) => !open);
+                setRulesOpen(false);
+              }}
+            >
+              Tag rules
             </button>
             <button type="button" className="btn-ghost" onClick={() => void organizeAllTasks()} disabled={classifying || !tasks.length}>
               {classifying ? 'Tagging...' : 'AI organize'}
@@ -1048,6 +1103,37 @@ export function AshiPage() {
               </button>
               <button type="button" className="btn-3d" onClick={() => void saveRules()}>
                 Save rules
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {tagRulesOpen ? (
+          <div className="ashi-rules-editor">
+            <textarea
+              value={tagRulesDraft}
+              onChange={(event) => setTagRulesDraft(event.target.value)}
+              placeholder={`{
+  "tags": {
+    "gol_bazar": {
+      "description": "Tasks related to Gol Bazar.",
+      "triggers": ["gol bazar", "yellow panni"],
+      "parent_tags": ["katni_city", "katni"],
+      "move_default": "unclear",
+      "examples": ["yellow panni lena"]
+    }
+  },
+  "hierarchy": {
+    "gol_bazar": ["katni_city", "katni"]
+  }
+}`}
+            />
+            <div className="ashi-rules-actions">
+              <button type="button" className="btn-ghost" onClick={() => setTagRulesOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-3d" onClick={() => void saveTagRules()}>
+                Save tag rules
               </button>
             </div>
           </div>
