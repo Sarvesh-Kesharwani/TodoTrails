@@ -494,7 +494,7 @@ export function AshiPage() {
     const response = await fetch('/api/ashi/classify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ todos: items, categories: sourceCategories }),
+      body: JSON.stringify({ todos: items, categories: sourceCategories, rulesPrompt }),
     });
     const data = (await response.json()) as { assignments?: CategoryAssignment[] };
     return data.assignments ?? [];

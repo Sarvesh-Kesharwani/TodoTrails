@@ -165,7 +165,87 @@ function matchCategoryId(taskCategory: string, categories: AshiCategory[]) {
   return found?.id;
 }
 
-export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[]): Promise<CategoryAssignment[]> {
+function normalizeRuleKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9\u0900-\u097f]+/g, '');
+}
+
+function resolveCategory(value: string, categories: AshiCategory[]) {
+  const clean = normalizeRuleKey(value);
+  if (!clean) return undefined;
+  return categories.find((category) => normalizeRuleKey(category.name) === clean);
+}
+
+function splitRuleTags(value: string) {
+  return value
+    .split(/,|\band\b|&|\+|\//i)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function parseHierarchyRules(source: string, categories: AshiCategory[]) {
+  const pairs: Array<{ child: AshiCategory; parent: AshiCategory }> = [];
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.replace(/^[-*]\s*/, '').trim();
+    if (!line) continue;
+
+    const arrow = /^(.+?)\s*(?:->|=>)\s*(.+)$/.exec(line);
+    const words = /^(.+?)\s+(?:comes under|under|inside|belongs to|part of|ke under|ke andar)\s+(.+)$/i.exec(line);
+    const match = arrow ?? words;
+    if (!match) continue;
+
+    const child = resolveCategory(match[1], categories);
+    if (!child) continue;
+    for (const parentText of splitRuleTags(match[2])) {
+      const parent = resolveCategory(parentText.replace(/\.$/, ''), categories);
+      if (parent && parent.id !== child.id) pairs.push({ child, parent });
+    }
+  }
+  return pairs;
+}
+
+function expandAssignmentsWithHierarchy(
+  assignments: CategoryAssignment[],
+  todos: TodoItem[],
+  categories: AshiCategory[],
+  rulesPrompt: string,
+) {
+  const hierarchy = parseHierarchyRules(rulesPrompt, categories);
+  if (!hierarchy.length) return assignments;
+
+  const byTodo = new Map(todos.map((todo) => [todo.id, todo]));
+  return assignments.map((assignment) => {
+    const names = new Set(assignment.taskTags);
+    const todoText = normalizeRuleKey(`${byTodo.get(assignment.todoId)?.title ?? ''} ${byTodo.get(assignment.todoId)?.notes ?? ''}`);
+
+    for (const { child } of hierarchy) {
+      if (todoText.includes(normalizeRuleKey(child.name))) names.add(child.name);
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const { child, parent } of hierarchy) {
+        if (names.has(child.name) && !names.has(parent.name)) {
+          names.add(parent.name);
+          changed = true;
+        }
+      }
+    }
+
+    const resolvedCategories = Array.from(names)
+      .map((name) => resolveCategory(name, categories))
+      .filter((category): category is AshiCategory => Boolean(category));
+    const primary = resolvedCategories[0] ?? categories.find((category) => category.id === assignment.categoryId);
+    return {
+      ...assignment,
+      categoryId: primary?.id ?? assignment.categoryId,
+      taskCategory: primary?.name ?? assignment.taskCategory,
+      taskTags: resolvedCategories.map((category) => category.name),
+    };
+  });
+}
+
+export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[], rulesPrompt = ''): Promise<CategoryAssignment[]> {
   if (!todos.length || !categories.length) return [];
 
   try {
@@ -180,7 +260,8 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'For each todo, assign all relevant category tags from the provided list. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+              'For each todo, assign all relevant category tags from the provided list. Use the userRules text, especially any location hierarchy / parent tag rules, so a task can receive child specific tags and parent generic tags even when the parent keyword is not written in the task title. Return this exact JSON shape: {"assignments":[{"todoId":"...","taskTags":["exact category name 1","exact category name 2"],"taskName":"clean task name","moveToNextDay":true,"confidence":0.0,"reason":"short"}]}. taskTags must be an array of one or more exact category names from the categories list. moveToNextDay means this task should be carried into tomorrow if unfinished.',
+            userRules: rulesPrompt,
             categories: categoryPayload(categories),
             todos: todos.map(compactTodo),
           }),
@@ -227,9 +308,14 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
       if (typeof raw.reason === 'string') assignment.reason = raw.reason.slice(0, 160);
       return assignment;
     });
-    return parsed.filter((item): item is CategoryAssignment => Boolean(item));
+    return expandAssignmentsWithHierarchy(
+      parsed.filter((item): item is CategoryAssignment => Boolean(item)),
+      todos,
+      categories,
+      rulesPrompt,
+    );
   } catch {
-    return todos.map((todo) => {
+    return expandAssignmentsWithHierarchy(todos.map((todo) => {
       const catId = fallbackCategory(todo, categories);
       const cat = categories.find((c) => c.id === catId) ?? categories[0];
       return {
@@ -242,7 +328,7 @@ export async function classifyTodos(todos: TodoItem[], categories: AshiCategory[
         confidence: 0,
         reason: 'Fallback category match.',
       };
-    });
+    }), todos, categories, rulesPrompt);
   }
 }
 
@@ -262,7 +348,7 @@ export async function generateCategoriesFromText(source: string): Promise<Genera
           role: 'user',
           content: JSON.stringify({
             instructions:
-              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. If a category line has explicit marker like [layer: generic] or [layer: specific], obey that marker exactly. Otherwise classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
+              'Read the user text. Extract every task category and a clear description of what kind of tasks belong there. Ignore section headings like "Location hierarchy / parent tags" and explanatory bullets like "Add rules like" or "Meaning". If a category line has explicit marker like [layer: generic] or [layer: specific], obey that marker exactly. Otherwise classify each category into layer "generic" for broad areas/cities/localities like Katni, JBP, Madhav Nagar, or "specific" for exact spots, shops, people, workers, or situational triggers like CNC, Indu, electrician. Return {"categories":[{"name":"category name","description":"classification rule","layer":"generic or specific"}]}.',
             userText: cleanSource,
           }),
         },

@@ -111,6 +111,12 @@ const DEFAULT_ASHI_CATEGORIES: AshiCategory[] = [
   { id: 'ashi-cat-electrician-aayega', name: 'Jub electrician aayega', description: 'Electrical work when electrician comes.', layer: 'specific', createdAt: new Date(0).toISOString() },
 ];
 
+const DEFAULT_ASHI_RULES_PROMPT = `${DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n\n')}
+
+Location hierarchy / parent tags:
+- Add rules like: jilharighaat -> jbp
+- Meaning: if a task belongs to jilharighaat, also tag it with jbp even when jbp is not written in the task title.`;
+
 export const DEFAULT_STORE: TodoStore = {
   todos: [],
   dimensions: [
@@ -122,7 +128,7 @@ export const DEFAULT_STORE: TodoStore = {
   completionHistory: [],
   ashiSettings: {
     categories: DEFAULT_ASHI_CATEGORIES,
-    rulesPrompt: DEFAULT_ASHI_CATEGORIES.map((category) => `${category.name}: ${category.description ?? ''}`).join('\n\n'),
+    rulesPrompt: DEFAULT_ASHI_RULES_PROMPT,
     rolloverPrompt: DEFAULT_ASHI_ROLLOVER_PROMPT,
   },
   updatedAt: new Date(0).toISOString(),
@@ -258,11 +264,14 @@ function normalizeAshiSettings(raw: unknown): AshiSettings {
   const categories = rawCategories
     ? rawCategories.map(normalizeAshiCategory).filter((item): item is AshiCategory => Boolean(item))
     : DEFAULT_STORE.ashiSettings.categories;
-  const rulesPrompt =
+  const rawRulesPrompt =
     cleanText(data.rulesPrompt) ||
     cleanText(data.categoriesSource) ||
     cleanText(data.rolloverPrompt) ||
-    DEFAULT_STORE.ashiSettings.rulesPrompt;
+    DEFAULT_ASHI_RULES_PROMPT;
+  const rulesPrompt = /location hierarchy|parent tags/i.test(rawRulesPrompt)
+    ? rawRulesPrompt
+    : `${rawRulesPrompt.trim()}\n\nLocation hierarchy / parent tags:\n- Add rules like: jilharighaat -> jbp\n- Meaning: if a task belongs to jilharighaat, also tag it with jbp even when jbp is not written in the task title.`;
   return {
     categories,
     rulesPrompt,
